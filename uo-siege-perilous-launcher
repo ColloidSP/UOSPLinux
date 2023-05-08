@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import shutil
+import sys
+import tempfile
+import traceback
+import urllib.request
+import xml.etree.ElementTree as ElementTree
+import zipfile
+from pathlib import Path
+
+
+def yesno(q, default=True):
+    if default:
+        q = f"{q} [Y/n]? "
+    else:
+        q = f"{q} [y/N]? "
+
+    response = input(q)
+
+    if response[0:1].lower() == "y":
+        return True
+    elif response[0:1].lower() == "n":
+        return False
+    else:
+        return default
+
+
+def dumps(d):
+    return json.dumps(d, indent=2, sort_keys=True)
+
+
+def download(url, path, name=None):
+    if name is None:
+        name = path.name
+
+    did_report_progress = False
+
+    def reporthook(count, block_size, total_size):
+        nonlocal did_report_progress
+
+        if total_size > -1:
+            did_report_progress = True
+            done = min(count * block_size / total_size, 1)
+
+            line_begin = f"{name} ["
+            line_end = f"] {round(done * 100, 1): >5.1f}%"
+            bar_width = 80 - len(line_begin) - len(line_end)
+            bar = f"{'=' * int(bar_width * done)}".ljust(bar_width)
+            print(f"{line_begin}{bar}{line_end}", end="\r", flush=True)
+
+        elif count == 0:
+            print(f"Downloading {name}...")
+
+    urllib.request.urlretrieve(url, path, reporthook)
+    if did_report_progress:
+        print()
+
+
+def check_md5sum(file, md5sum):
+    if file.exists():
+        with open(file, "rb") as f:
+            data = f.read()
+        return hashlib.md5(data).hexdigest().lower() == md5sum.lower()
+    else:
+        return False
+
+
+def unzip(archive, path):
+    with zipfile.ZipFile(archive, "r") as zip:
+        zip.extractall(path)
+
+
+class UOSiegePerilousLauncher:
+    HOME_DIR = Path("~").expanduser()
+    CONFIG_PATH = HOME_DIR / ".config" / "uo-siege-perilous.json"
+    MONO_EXE = "mono-debug"
+    UNKNOWN = "unknown"
+    DEFAULT_CONFIG = {
+        "client_version": UNKNOWN,
+        "icon_version": UNKNOWN,
+        "install_path": str(HOME_DIR / "games" / "uo-siege-perilous"),
+        "razor": True,
+        "razor_version": UNKNOWN,
+    }
+    CUO_MANIFEST_URL = "https://www.classicuo.eu/dev/deploy/manifest.xml"
+    CUO_DOWNLOAD_URL = "https://www.classicuo.eu/dev/deploy/ClassicUO-dev-preview-release.zip"
+    AI_PKG_VERSIONS_URL = "http://www.game-master.net/resources/packageversions.txt"
+    CLIENT_DOWNLOAD_URL = "http://www.game-master.net/resources/AI_Golden_Client.zip"
+    CLIENT_ZIPFILE_SUBDIR_NAME = "AI_Golden_Client"
+    RAZOR_RELEASE_URL = "https://api.github.com/repos/markdwags/Razor/releases/latest"
+
+    # XXX faster development
+    CUO_MANIFEST_URL = "http://localhost:8000/manifest.xml"
+    CUO_DOWNLOAD_URL = "http://localhost:8000/ClassicUO-dev-preview-release.zip"
+    AI_PKG_VERSIONS_URL = "http://localhost:8000/packageversions.txt"
+    CLIENT_DOWNLOAD_URL = "http://localhost:8000/AI_Golden_Client.zip"
+    RAZOR_RELEASE_URL = "http://localhost:8000/razor-latest.json"
+
+    def __init__(self):
+        self._remote_client_version = None
+        self._remote_razor_release = None
+        self._tempdir = None
+
+    def parse_args(self):
+        parser = argparse.ArgumentParser("UO:Siege Perilous launcher")
+        parser.add_argument("-d", "--debug", action="store_true", help="run with verbose debug logging")
+        parser.add_argument("-p", "--print-config", action="store_true", help="print current configuration and exit")
+        parser.add_argument("--install-path", help="override install directory, remembered for next time")
+        razor = parser.add_mutually_exclusive_group()
+        razor.add_argument(
+            "--with-razor", action="store_true", help="run with Razor (the default), remembered for next time"
+        )
+        razor.add_argument("--without-razor", action="store_true", help="run without Razor, remembered for next time")
+        update = parser.add_mutually_exclusive_group()
+        update.add_argument("-u", "--update", action="store_true", help="check for update")
+        update.add_argument("-f", "--force-update", action="store_true", help="force an update (reinstalls everything)")
+        update.add_argument(
+            "--force-delete-and-reinstall",
+            action="store_true",
+            help="completely delete (includes profiles/macros) and reinstall",
+        )
+        parser.add_argument(
+            "--skip-mono-check", action="store_true", help="skip step that verifies Mono is installed for Razor"
+        )
+
+        self.args = parser.parse_args()
+        self.debug(f"Parsed args: {dumps(vars(self.args))}")
+
+    def debug(self, s):
+        if self.args.debug:
+            print(f"\033[33m[{datetime.datetime.now()}] {s}\033[0m", file=sys.stderr)
+
+    def mkdir(self, d):
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            self.debug(f"Created directory: {d}")
+
+    def save_config(self):
+        with open(self.CONFIG_PATH, "w") as file:
+            json.dump(self.config, file)
+        self.debug(f"Config saved: {dumps(self.config)}")
+
+    def load_config(self):
+        self.mkdir(self.CONFIG_PATH.parent)
+
+        self.config = self.DEFAULT_CONFIG.copy()
+        if self.CONFIG_PATH.exists():
+            self.debug(f"Config {self.CONFIG_PATH} found.")
+            with open(self.CONFIG_PATH, "r") as file:
+                self.config.update(json.load(file))
+        else:
+            self.debug(f"Config {self.CONFIG_PATH} not found! Using defaults.")
+        self.debug(f"Loaded config: {dumps(self.config)}")
+
+    def update_config_from_args(self):
+        save_config = False
+        if self.args.install_path:
+            self.config["install_path"] = self.args.install_path
+            save_config = True
+        if self.args.with_razor or self.args.without_razor:
+            self.config["razor"] = self.args.with_razor or not self.args.without_razor
+            save_config = True
+        if save_config:
+            self.save_config()
+
+    def mono_check(self):
+        if not self.args.skip_mono_check and self.config["razor"] and not shutil.which(self.MONO_EXE):
+            print("Mono is required for the use of Razor. Visit https://www.mono-project.com/ for installation info.\n")
+            if not yesno("Would you like to force the use of Razor anyway?", default=False):
+                self.config["razor"] = False
+                self.save_config()
+
+    def set_paths(self):
+        self.install_path = Path(self.config["install_path"])
+        self.cuo_path = self.install_path / "classicuo"
+        self.razor_path = self.cuo_path / "Data" / "Plugins" / "Razor"
+        self.client_path = self.install_path / "ai-golden-client"
+        self.icon_path = self.HOME_DIR / ".local" / "share" / "icons" / "uo-siege-perilous.png"
+        self.launcher_path = self.HOME_DIR / ".local" / "share" / "applications" / "uo-siege-perilous.desktop"
+
+        if not self.install_path.exists():
+            if yesno(f"Install path {self.install_path} does not exist. Create it?"):
+                self.mkdir(self.install_path)
+                self.debug(f"{self.install_path} created")
+            else:
+                print("Launcher aborted!")
+                sys.exit(1)
+
+    def verify_classicuo(self):
+        should_update = self.args.force_update or self.args.force_delete_and_reinstall or not self.cuo_path.exists()
+
+        if not should_update and self.args.update:
+            print("Checking for ClassicUO updates.")
+            manifest_path = self.tempdir / "cuo-manifest.xml"
+            download(self.CUO_MANIFEST_URL, manifest_path, name="ClassicUO file manifest")
+
+            try:
+                for file_elem in ElementTree.parse(manifest_path).getroot()[0][0]:
+                    file, md5sum = file_elem.attrib["filename"], file_elem.attrib["hash"]
+                    if check_md5sum(self.cuo_path / Path(file), md5sum):
+                        self.debug(f"md5sum for {file}: passed.")
+                    else:
+                        self.debug(f"md5sum for {file}: FAILED!!!")
+                        print("ClassicUO update required.")
+                        should_update = True
+                        break
+
+            except Exception:
+                self.debug(f"Got an exception while parsing the CUO manifest\n{traceback.format_exc()}")
+                print("Error checking ClassicUO for updates. Run with --force-update to force an update.")
+
+        if should_update:
+            print("Downloading updated ClassicUO client.")
+            cuo_zip_path = self.tempdir / "classicuo.zip"
+            download(self.CUO_DOWNLOAD_URL, cuo_zip_path, name="ClassicUO client")
+
+            if self.args.force_delete_and_reinstall:
+                self.debug(f"Force deleting {self.cuo_path}")
+                shutil.rmtree(self.cuo_path, ignore_errors=True)
+
+            self.mkdir(self.cuo_path)
+            print("Extracting ClassicUO files.")
+            unzip(cuo_zip_path, self.cuo_path)
+            os.chmod(self.cuo_path / "ClassicUO", 0o755)
+            os.chmod(self.cuo_path / "ClassicUO.bin.x86_64", 0o755)
+
+            print("ClassicUO now up to date!")
+        else:
+            print("Not updating ClassicUO.")
+
+    def get_remote_client_version(self):
+        if self._remote_client_version is None:
+            try:
+                pkg_versions_path = self.tempdir / "ai-packageversions.txt"
+                download(self.AI_PKG_VERSIONS_URL, pkg_versions_path, name="Angel Island package versions")
+
+                with open(pkg_versions_path, "r") as file:
+                    pkg_versions = [s.strip() for s in file.read().splitlines()]
+                    pkg_versions = [s for s in pkg_versions if s and not s.startswith("#")]
+                    # Per comment in this file, first entry is the UO client version
+                    self._remote_client_version = pkg_versions[0]
+                    self.debug(f"Got remote client version {self._remote_client_version}")
+            except Exception:
+                self._remote_client_version = self.UNKNOWN
+                self.debug(f"Got an exception while parsing AI package versions\n{traceback.format_exc()}")
+
+        return self._remote_client_version
+
+    def verify_client(self):
+        should_update = self.args.force_update or self.args.force_delete_and_reinstall or not self.client_path.exists()
+        if not should_update and self.args.update:
+            print('Checking for Angel Island "Golden Client" updates.')
+            remote_version = self.get_remote_client_version()
+            if remote_version == self.UNKNOWN:
+                print("Error checking client for updates. Run with --force-update to force an update.")
+            elif remote_version != self.config["client_version"]:
+                should_update = True
+                print('Angel Island "Golden Client" update required.')
+
+        if should_update:
+            print('Downloading updated Angel Island "Golden Client".')
+            client_zip_path = self.tempdir / "ai-golden-client.zip"
+            client_tmp_path = self.tempdir / "ai-golden-client"
+            # It's inside a subdirectory of the zip
+            client_tmp_subdir = client_tmp_path / self.CLIENT_ZIPFILE_SUBDIR_NAME
+
+            # Download these two in rapid succession
+            remote_version = self.get_remote_client_version()
+            download(self.CLIENT_DOWNLOAD_URL, client_zip_path, name='Angel Island "Golden Client"')
+
+            print('Installing new Angel Island "Golden Client" files.')
+            self.mkdir(client_tmp_path)
+            unzip(client_zip_path, client_tmp_path)
+
+            self.debug(f"Deleting old client files {self.client_path}")
+            shutil.rmtree(self.client_path, ignore_errors=True)
+
+            shutil.move(client_tmp_subdir, self.client_path)
+            self.config["client_version"] = remote_version
+            self.save_config()
+
+            print('Angel Island "Golden Client" now up to date!')
+        else:
+            print('Not updating Angel Island "Golden Client".')
+
+    def get_remote_razor_release(self):
+        if self._remote_razor_release is None:
+            try:
+                razor_release_path = self.tempdir / "razor-release.txt"
+                download(self.RAZOR_RELEASE_URL, razor_release_path, name="Razor release info")
+
+                with open(razor_release_path, "r") as file:
+                    release = json.load(file)
+
+                for asset in release["assets"]:
+                    if "x64" in asset["name"]:
+                        self._remote_razor_release = (release["tag_name"], asset["browser_download_url"])
+                        break
+                else:
+                    raise Exception("Error parsing Razor release")
+            except Exception:
+                self._remote_razor_release = (self.UNKNOWN, None)
+                self.debug(f"Got an exception while parsing AI package versions\n{traceback.format_exc()}")
+
+        return self._remote_razor_release
+
+    def verify_razor(self):
+        should_update = self.args.force_update or self.args.force_delete_and_reinstall or not self.razor_path.exists()
+        if not should_update and self.args.update:
+            print("Checking for Razor Community Edition updates.")
+            remote_version, _ = self.get_remote_razor_release()
+            if remote_version == self.UNKNOWN:
+                print("Error checking Razor for updates. You may want to run without Razor or forced updates for now.")
+            elif remote_version != self.config["razor_version"]:
+                should_update = True
+                print("Razor update required.")
+
+        if should_update:
+            print("Downloading updated Razor Community Edition.")
+            remote_version, remote_url = self.get_remote_razor_release()
+            if remote_version == self.UNKNOWN:
+                print("Can't download Razor without release info, which had errors.")
+            else:
+                razor_zip_path = self.tempdir / "razor.zip"
+                download(remote_url, razor_zip_path, name="Razor")
+
+                # Force delete would have already cleared CUO folder
+                self.mkdir(self.razor_path)
+                print("Extracting Razor Community Edition files.")
+                unzip(razor_zip_path, self.razor_path)
+                self.config["razor_version"] = remote_version
+                self.save_config()
+
+                print("Razor Community Edition now up to date!")
+        else:
+            print("Not updating Razor Community Edition.")
+
+    @property
+    def tempdir(self):
+        if self._tempdir is None:
+            self._tempdir = tempfile.TemporaryDirectory(prefix="uo-sp-")
+            self.debug(f"Created temporary workspace {self._tempdir.name}")
+        return Path(self._tempdir.name)
+
+    def main(self):
+        self.parse_args()
+        print("Running UO:Siege Perilous Linux launcher")
+
+        self.load_config()
+        self.update_config_from_args()
+
+        if self.args.print_config:
+            print(dumps(self.config))
+            sys.exit(0)
+
+        self.mono_check()
+        self.set_paths()
+        self.verify_classicuo()
+        self.verify_client()
+
+        if self.config["razor"]:
+            self.verify_razor()
+
+
+if __name__ == "__main__":
+    launcher = UOSiegePerilousLauncher()
+    launcher.main()
