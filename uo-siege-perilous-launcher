@@ -113,7 +113,7 @@ class UOSiegePerilousLauncher:
     CLIENT_DOWNLOAD_URL = "http://www.game-master.net/resources/AI_Golden_Client.zip"
     CLIENT_ZIPFILE_SUBDIR_NAME = "AI_Golden_Client"
     RAZOR_RELEASE_URL = "https://api.github.com/repos/markdwags/Razor/releases/latest"
-    ICON_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/icon.png"
+    ICON_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png"
 
     LAUNCHER_TEMPLATE = (
         "[Desktop Entry]\n"
