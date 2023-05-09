@@ -1,6 +1,10 @@
-# UO:Siege Perilous installer script for Linux
+# UO:Siege Perilous Launcher for Linux
 
-Installer script for the [UO:Siege Perilous](https://game-master.net/) shard on Linux.
+Launcher script for the [UO:Siege Perilous](https://game-master.net/) shard for
+Linux.
+
+**WARNING: Launcher is currently in alpha. It works great for me, but
+reach out to Colloid on Discord to help with testing.**
 
 ## Installation
 
