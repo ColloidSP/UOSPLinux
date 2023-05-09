@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import json
 import os
+from pathlib import Path
 import shutil
 import sys
 import tempfile
@@ -12,7 +13,6 @@ import traceback
 import urllib.request
 import xml.etree.ElementTree as ElementTree
 import zipfile
-from pathlib import Path
 
 
 def yesno(q, default=True):
@@ -34,6 +34,7 @@ def yesno(q, default=True):
 def dumps(d):
     return json.dumps(d, indent=2, sort_keys=True)
 
+
 FONT_RED = 31
 FONT_GREEN = 32
 FONT_YELLOW = 33
@@ -48,8 +49,8 @@ def font(s, mods):
     if isinstance(mods, int):
         mods = (mods,)
     for mod in mods:
-        s = f'\033[{mod}m{s}'
-    return f'{s}\033[0m'
+        s = f"\033[{mod}m{s}"
+    return f"{s}\033[0m"
 
 
 def download(url, path, name=None):
@@ -100,7 +101,6 @@ class UOSiegePerilousLauncher:
     UNKNOWN = "unknown"
     DEFAULT_CONFIG = {
         "client_version": UNKNOWN,
-        "icon_version": UNKNOWN,
         "install_path": str(HOME_DIR / "games" / "uo-siege-perilous"),
         "razor": True,
         "razor_version": UNKNOWN,
@@ -131,7 +131,7 @@ class UOSiegePerilousLauncher:
     )
 
     # Hosted locally for faster development
-    if os.environ.get('UOSP_DEBUG_USE_LOCALHOST'):
+    if os.environ.get("UOSP_DEBUG_USE_LOCALHOST"):
         CUO_MANIFEST_URL = "http://localhost:8000/cuo-manifest.xml"
         CUO_DOWNLOAD_URL = "http://localhost:8000/classicuo.zip"
         AI_PKG_VERSIONS_URL = "http://localhost:8000/ai-packageversions.txt"
@@ -148,9 +148,16 @@ class UOSiegePerilousLauncher:
         parser = argparse.ArgumentParser("UO:Siege Perilous launcher")
         update = parser.add_mutually_exclusive_group()
         update.add_argument("-u", "--update", action="store_true", help="check for update")
-        parser.add_argument("-s", "--skip-launch", action="store_true", help="run but don't launch client, useful for only updating or installing")
+        parser.add_argument(
+            "-s",
+            "--skip-launch",
+            action="store_true",
+            help="run but don't launch client, useful for only updating or installing",
+        )
         parser.add_argument("-p", "--print-config", action="store_true", help="print current configuration and exit")
-        parser.add_argument("--install-path", help="override install directory, remembered for next time")
+        parser.add_argument(
+            "--install-path", metavar="/path.to/uo/folder", help="override install directory, remembered for next time"
+        )
         razor = parser.add_mutually_exclusive_group()
         razor.add_argument(
             "--with-razor", action="store_true", help="run with Razor (the default), remembered for next time"
@@ -165,7 +172,9 @@ class UOSiegePerilousLauncher:
         parser.add_argument(
             "--skip-mono-check", action="store_true", help="skip step that verifies Mono is installed for Razor"
         )
-        parser.add_argument("--uninstall", action="store_true", help="completely uninstall (backup your profile/macros!)")
+        parser.add_argument(
+            "--uninstall", action="store_true", help="completely uninstall (backup your profile/macros!)"
+        )
         parser.add_argument("-d", "--debug", action="store_true", help="run with verbose debug logging")
 
         self.args = parser.parse_args()
@@ -180,7 +189,7 @@ class UOSiegePerilousLauncher:
 
     def debug(self, s):
         if self.args.debug:
-            print(font(f"\[{datetime.datetime.now()}] {s}", FONT_CYAN), file=sys.stderr)
+            print(font(f"[{datetime.datetime.now()}] {s}", FONT_CYAN), file=sys.stderr)
 
     def mkdir(self, d):
         if not d.exists():
@@ -223,26 +232,23 @@ class UOSiegePerilousLauncher:
                 "installation info. We recommend you install mono and run again. However, if you\n"
                 "want to install Razor, skip this prompt with the --skip-mono-check argument.\n"
             )
-            release_file = Path('/etc/os-release')
+            release_file = Path("/etc/os-release")
             if release_file.exists():
                 distro = None
-                with open(release_file, 'r') as file:
+                with open(release_file, "r") as file:
                     for line in file:
-                        if line.startswith('ID='):
+                        if line.startswith("ID="):
                             distro = line[3:].strip().lower()
                             break
 
-                if distro in ('ubuntu', 'debian', 'arch'):
-                    if distro in ('ubuntu', 'debian'):
+                if distro in ("ubuntu", "debian", "arch"):
+                    if distro in ("ubuntu", "debian"):
                         print(
                             f"You can do that on {distro.title()} Linux by running the command,\n\n"
                             "    sudo apt-get install mono-complete\n"
                         )
-                    elif distro == 'arch':
-                        print(
-                            f"You can do that on Arch Linux by running the command as root,\n\n"
-                            "    pacman -S mono\n"
-                        )
+                    elif distro == "arch":
+                        print("You can do that on Arch Linux by running the command as root,\n\n    pacman -S mono\n")
             if yesno(f"Would you like to run {font('WITHOUT', (FONT_RED, FONT_BOLD))} Razor", default=False):
                 self.config["razor"] = False
                 self.save_config()
@@ -250,7 +256,7 @@ class UOSiegePerilousLauncher:
                 print("Aborting.")
                 sys.exit(0)
 
-    def set_paths(self):
+    def set_paths(self, skip_prompt=False):
         self.install_path = Path(self.config["install_path"])
         self.cuo_path = self.install_path / "classicuo"
         self.cuo_exec = self.cuo_path / "ClassicUO"
@@ -262,7 +268,7 @@ class UOSiegePerilousLauncher:
         for var in ("install_path", "cuo_path", "cuo_exec", "razor_path", "client_path", "icon_path", "launcher_path"):
             self.debug(f"Set variable {var}: {getattr(self, var)!r}")
 
-        if not self.install_path.exists():
+        if not skip_prompt and not self.install_path.exists():
             if yesno(f"Install path {self.install_path} does not exist. Create it"):
                 self.mkdir(self.install_path)
                 self.debug(f"{self.install_path} created")
@@ -427,7 +433,7 @@ class UOSiegePerilousLauncher:
             did_run = True
             print("Installing updated desktop launcher.")
             self.mkdir(self.launcher_path.parent)
-            with open(self.launcher_path, 'w') as file:
+            with open(self.launcher_path, "w") as file:
                 file.write(self.launcher)
 
         if update_requested or not self.icon_path.exists():
@@ -454,12 +460,21 @@ class UOSiegePerilousLauncher:
 
         settings_path = self.cuo_path / "settings.json"
         if settings_path.exists():
-            with open(settings_path, 'r') as file:
+            with open(settings_path, "r") as file:
                 settings = json.load(file)
         settings.update(required_settings)
 
-        with open(settings_path, 'w') as file:
+        with open(settings_path, "w") as file:
             json.dump(settings, file, indent=2, sort_keys=True)
+
+    def uninstall(self):
+        for path in (Path(self.config["install_path"]), self.launcher_path, self.icon_path, self.CONFIG_PATH):
+            print(f"Removing {path}")
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        print("UO:Siege Perilous uninstalled!")
 
     def launch(self):
         print("Launching!")
@@ -468,7 +483,6 @@ class UOSiegePerilousLauncher:
 
     def main(self):
         self.parse_args()
-        print(font("UO:Siege Perilous Linux Launcher\n", (FONT_BOLD, FONT_UNDERLINE)))
 
         self.load_config()
         self.update_config_from_args()
@@ -477,12 +491,37 @@ class UOSiegePerilousLauncher:
             print(dumps(self.config))
             sys.exit(0)
 
+        print(font("UO:Siege Perilous Linux Launcher\n", (FONT_BOLD, FONT_UNDERLINE)))
+
+        if not self.args.uninstall:
+            self.mono_check()
+
+        self.set_paths(skip_prompt=self.args.uninstall)
+
         if self.args.uninstall:
-            print("Uninstall not yet implemented!")
+            if yesno(
+                (
+                    "Are you SURE you want to UNINSTALL UO:Siege Perilous, which will also delete\n"
+                    "your profile and all Razor macros"
+                ),
+                default=False,
+            ):
+                self.uninstall()
+            else:
+                print("Aborting.")
             sys.exit(0)
 
-        self.mono_check()
-        self.set_paths()
+        if self.args.force_delete_and_reinstall:
+            if not yesno(
+                (
+                    "Are you SURE you want to DELETE and completely reinstall UO:Siege Perilous,\n"
+                    "which will also delete your profile and all Razor macros"
+                ),
+                default=False,
+            ):
+                print("Aborting.")
+                sys.exit(0)
+
         self.verify_classicuo()
         self.verify_client()
 
