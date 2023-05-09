@@ -4,7 +4,7 @@ Installer script for the [UO:Siege Perilous](https://game-master.net/) shard on 
 
 ## Installation
 
-Download the launcher and mark it as executable as root,
+Download the launcher and mark it as executable,
 
 ```bash
 sudo curl -fsSLo /usr/local/bin/uo-siege-perilous-launcher \
@@ -12,7 +12,7 @@ sudo curl -fsSLo /usr/local/bin/uo-siege-perilous-launcher \
 sudo chmod +x /usr/local/bin/uo-siege-perilous-launcher
 ```
 
-To run the launcher, execute the command with your user account,
+To run the launcher, execute the command with your user account (ie **not** as root),
 
 ```bash
 uo-siege-perilous-launcher
