@@ -16,7 +16,6 @@ import zipfile
 
 
 # TODO
-#  * Check for root, warn and prompt yesno and exit (add --skip-root-check)
 #  * Check if out of date, ie is the latest version and WARN in bold yellow, but proceed anyway
 #  * Add --self-update, check if path to script is writable, and overwrite it with latest commit
 
@@ -154,8 +153,9 @@ class UOSiegePerilousLauncher:
         parser = argparse.ArgumentParser("UO:Siege Perilous launcher")
         update = parser.add_mutually_exclusive_group()
         update.add_argument("-u", "--update", action="store_true", help="check for update")
+        parser.add_argument("-s", "--self-update", action="store_true", help="update this script to the latest version")
         parser.add_argument(
-            "-s",
+            "-S",
             "--skip-launch",
             action="store_true",
             help="run but don't launch client, useful for only updating or installing",
@@ -178,6 +178,7 @@ class UOSiegePerilousLauncher:
         parser.add_argument(
             "--skip-mono-check", action="store_true", help="skip step that verifies Mono is installed for Razor"
         )
+        parser.add_argument("--skip-root-check", action="store_true", help="skip step that verifies user isn't root")
         parser.add_argument(
             "--uninstall", action="store_true", help="completely uninstall (backup your profile/macros!)"
         )
@@ -281,6 +282,14 @@ class UOSiegePerilousLauncher:
             else:
                 print("Launcher aborted!")
                 sys.exit(1)
+
+    def not_root_check(self):
+        if not self.args.skip_root_check and os.geteuid() == 0:
+            print(
+                "Script will NOT run by default as the root user. However, if you're sure that's\n"
+                "what you want to do, run again with the --skip-root-check argument."
+            )
+            sys.exit(1)
 
     def verify_classicuo(self):
         should_update = self.args.force_update or self.args.force_delete_and_reinstall or not self.cuo_path.exists()
@@ -498,6 +507,9 @@ class UOSiegePerilousLauncher:
             sys.exit(0)
 
         print(font("UO:Siege Perilous Linux Launcher\n", (FONT_BOLD, FONT_UNDERLINE)))
+
+        if not self.args.self_update:
+            self.not_root_check()
 
         if not self.args.uninstall:
             self.mono_check()
