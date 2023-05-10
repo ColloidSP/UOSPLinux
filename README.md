@@ -23,7 +23,8 @@ uo-siege-perilous-launcher
 ```
 
 After it runs for the first time, a shortcut will be added to your Desktop
-environment so you won't need to use the terminal (except to check for updates).
+environment's application menu so you shoudn't need to use the terminal
+(except to check for updates as below).
 
 To check for updates run,
 
