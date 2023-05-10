@@ -15,11 +15,6 @@ import xml.etree.ElementTree as ElementTree
 import zipfile
 
 
-# TODO
-#  * Check if out of date, ie is the latest version and WARN in bold yellow, but proceed anyway
-#  * Add --self-update, check if path to script is writable, and overwrite it with latest commit
-
-
 def yesno(q, default=True):
     if default:
         q = f"{q} [Y/n]? "
@@ -84,14 +79,17 @@ def download(url, path, name=None):
     if did_report_progress:
         print()
 
-
-def check_md5sum(file, md5sum):
+def md5sum_file(file):
     if file.exists():
         with open(file, "rb") as f:
             data = f.read()
-        return hashlib.md5(data).hexdigest().lower() == md5sum.lower()
+        return hashlib.md5(data).hexdigest().lower()
     else:
         return False
+
+
+def check_md5sum(file, md5sum):
+    return md5sum_file(file) == md5sum.lower()
 
 
 def unzip(archive, path):
@@ -119,6 +117,7 @@ class UOSiegePerilousLauncher:
     CLIENT_ZIPFILE_SUBDIR_NAME = "AI_Golden_Client"
     RAZOR_RELEASE_URL = "https://api.github.com/repos/markdwags/Razor/releases/latest"
     ICON_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png"
+    UPDATE_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-launcher"
 
     LAUNCHER_TEMPLATE = (
         "[Desktop Entry]\n"
@@ -143,6 +142,7 @@ class UOSiegePerilousLauncher:
         CLIENT_DOWNLOAD_URL = "http://localhost:8000/ai-golden-client.zip"
         RAZOR_RELEASE_URL = "http://localhost:8000/razor-latest.json"
         ICON_URL = "http://localhost:8000/icon.png"
+        UPDATE_URL = "http://localhost:8000/uo-siege-perilous-launcher"
 
     def __init__(self):
         self._remote_client_version = None
@@ -264,6 +264,7 @@ class UOSiegePerilousLauncher:
                 sys.exit(0)
 
     def set_paths(self, skip_prompt=False):
+        self.command_path = Path(__file__).absolute()
         self.install_path = Path(self.config["install_path"])
         self.cuo_path = self.install_path / "classicuo"
         self.cuo_exec = self.cuo_path / "ClassicUO"
@@ -290,6 +291,41 @@ class UOSiegePerilousLauncher:
                 "what you want to do, run again with the --skip-root-check argument."
             )
             sys.exit(1)
+
+    def verify_up_to_date(self, called_by_self_update=False):
+        if self.args.update or called_by_self_update:
+            print("Checking if launcher needs an update.")
+            local_md5sum = md5sum_file(self.command_path)
+            possible_updated_cmd_file = self.tempdir / "possible-updated-command"
+            download(self.UPDATE_URL, possible_updated_cmd_file, "launcher update info")
+            remote_md5sum = md5sum_file(possible_updated_cmd_file)
+            self.debug(f"Local launcher md5sum: {local_md5sum}")
+            self.debug(f"Remote launcher md5sum: {remote_md5sum}")
+            if called_by_self_update:
+                return local_md5sum == remote_md5sum
+            elif local_md5sum != remote_md5sum:
+                print(font("WARNING: UO:Siege Perilous launcher out of date! Use --self-update to update.", (FONT_BOLD, FONT_YELLOW)))
+
+
+    def self_update(self):
+        print("Running self update.")
+        if self.verify_up_to_date(called_by_self_update=True):
+            print("Launcher is already up to date! Exiting.")
+        else:
+            print("Update required! Performing it.")
+            if not os.access(self.command_path, os.W_OK):
+                print(
+                    f"Command [{self.command_path}] is NOT writeable.\n"
+                    "Self update may only work as root, so try again with sudo."
+                )
+                sys.exit(1)
+            with open(self.tempdir / "possible-updated-command", "r") as file:
+                launcher_script = file.read()
+            with open(self.command_path, "w") as file:
+                file.write(launcher_script)
+            os.chmod(self.command_path, 0o755)
+
+            print("Done!")
 
     def verify_classicuo(self):
         should_update = self.args.force_update or self.args.force_delete_and_reinstall or not self.cuo_path.exists()
@@ -529,6 +565,10 @@ class UOSiegePerilousLauncher:
                 print("Aborting.")
             sys.exit(0)
 
+        if self.args.self_update:
+            self.self_update()
+            sys.exit(0)
+
         if self.args.force_delete_and_reinstall:
             if not yesno(
                 (
@@ -540,6 +580,7 @@ class UOSiegePerilousLauncher:
                 print("Aborting.")
                 sys.exit(0)
 
+        self.verify_up_to_date()
         self.verify_classicuo()
         self.verify_client()
 
