@@ -15,6 +15,12 @@ import xml.etree.ElementTree as ElementTree
 import zipfile
 
 
+# TODO
+#  * Check for root, warn and prompt yesno and exit (add --skip-root-check)
+#  * Check if out of date, ie is the latest version and WARN in bold yellow, but proceed anyway
+#  * Add --self-update, check if path to script is writable, and overwrite it with latest commit
+
+
 def yesno(q, default=True):
     if default:
         q = f"{q} [Y/n]? "
