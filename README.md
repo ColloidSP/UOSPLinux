@@ -24,7 +24,8 @@ uo-siege-perilous-launcher
 
 After it runs for the first time, a shortcut will be added to your Desktop
 environment's application menu so you shoudn't need to use the terminal
-(except to check for updates as below).
+(except to check for updates as below). It should be in the "Games" folder,
+or just search for "UO:Siege Perilous" on GNOME, which is what I do.
 
 To check for updates run,
 
