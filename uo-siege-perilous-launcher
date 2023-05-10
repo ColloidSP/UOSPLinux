@@ -14,6 +14,11 @@ import xml.etree.ElementTree as ElementTree
 import zipfile
 from pathlib import Path
 
+# TODO
+#  * Check for root, warn and prompt yesno and exit (add --skip-root-check)
+#  * Check if out of date, ie is the latest version and WARN in bold yellow, but proceed anyway
+#  * Add --self-update, check if path to script is writable, and overwrite it with latest commit
+
 
 def yesno(q, default=True):
     if default:
@@ -45,7 +50,7 @@ FONT_UNDERLINE = 4
 
 
 def font(s, mods):
-    if isinstance(mods, int):
+    if isinstance(mods, str):
         mods = (mods,)
     for mod in mods:
         s = f'\033[{mod}m{s}'
@@ -65,14 +70,14 @@ def download(url, path, name=None):
             did_report_progress = True
             done = min(count * block_size / total_size, 1)
 
-            line_begin = f"Getting {name} ["
+            line_begin = f"{name} ["
             line_end = f"] {round(done * 100, 1): >5.1f}%"
             bar_width = 80 - len(line_begin) - len(line_end)
             bar = f"{'=' * int(bar_width * done)}".ljust(bar_width)
             print(f"{line_begin}{bar}{line_end}", end="\r", flush=True)
 
         elif count == 0:
-            print(f"Getting {name}...")
+            print(f"Downloading {name}...")
 
     urllib.request.urlretrieve(url, path, reporthook)
     if did_report_progress:
@@ -96,7 +101,7 @@ def unzip(archive, path):
 class UOSiegePerilousLauncher:
     HOME_DIR = Path("~").expanduser()
     CONFIG_PATH = HOME_DIR / ".config" / "uo-siege-perilous.json"
-    MONO_EXE = "mono"
+    MONO_EXE = "mono-debug"
     UNKNOWN = "unknown"
     DEFAULT_CONFIG = {
         "client_version": UNKNOWN,
@@ -105,39 +110,19 @@ class UOSiegePerilousLauncher:
         "razor": True,
         "razor_version": UNKNOWN,
     }
-    AI_ADDR = "uoangelisland.com"
-    AI_PORT = "2593"
     CUO_MANIFEST_URL = "https://www.classicuo.eu/dev/deploy/manifest.xml"
     CUO_DOWNLOAD_URL = "https://www.classicuo.eu/dev/deploy/ClassicUO-dev-preview-release.zip"
     AI_PKG_VERSIONS_URL = "http://www.game-master.net/resources/packageversions.txt"
     CLIENT_DOWNLOAD_URL = "http://www.game-master.net/resources/AI_Golden_Client.zip"
     CLIENT_ZIPFILE_SUBDIR_NAME = "AI_Golden_Client"
     RAZOR_RELEASE_URL = "https://api.github.com/repos/markdwags/Razor/releases/latest"
-    ICON_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png"
 
-    LAUNCHER_TEMPLATE = (
-        "[Desktop Entry]\n"
-        "Type=Application\n"
-        "Version=1.0\n"
-        "Name=UO:Siege Perilous\n"
-        "Keywords=uo;sp;siege;siege perilous;ultima;ultima online\n"
-        "Path={cuo_path}\n"
-        "Exec={cuo_exec}\n"
-        "Icon=uo-siege-perilous\n"
-        "StartupWMClass=ClassicUO.bin.x86_64\n"
-        "Terminal=false\n"
-        "Categories=Game;\n"
-        "StartupNotify=false\n"
-    )
-
-    # Hosted locally for faster development
-    if os.environ.get('UOSP_DEBUG_USE_LOCALHOST'):
-        CUO_MANIFEST_URL = "http://localhost:8000/cuo-manifest.xml"
-        CUO_DOWNLOAD_URL = "http://localhost:8000/classicuo.zip"
-        AI_PKG_VERSIONS_URL = "http://localhost:8000/ai-packageversions.txt"
-        CLIENT_DOWNLOAD_URL = "http://localhost:8000/ai-golden-client.zip"
-        RAZOR_RELEASE_URL = "http://localhost:8000/razor-latest.json"
-        ICON_URL = "http://localhost:8000/icon.png"
+    # XXX faster development
+    CUO_MANIFEST_URL = "http://localhost:8000/manifest.xml"
+    CUO_DOWNLOAD_URL = "http://localhost:8000/ClassicUO-dev-preview-release.zip"
+    AI_PKG_VERSIONS_URL = "http://localhost:8000/packageversions.txt"
+    CLIENT_DOWNLOAD_URL = "http://localhost:8000/AI_Golden_Client.zip"
+    RAZOR_RELEASE_URL = "http://localhost:8000/razor-latest.json"
 
     def __init__(self):
         self._remote_client_version = None
@@ -165,18 +150,10 @@ class UOSiegePerilousLauncher:
         parser.add_argument(
             "--skip-mono-check", action="store_true", help="skip step that verifies Mono is installed for Razor"
         )
-        parser.add_argument("--uninstall", action="store_true", help="completely uninstall (backup your profile/macros!)")
         parser.add_argument("-d", "--debug", action="store_true", help="run with verbose debug logging")
 
         self.args = parser.parse_args()
         self.debug(f"Parsed args: {dumps(vars(self.args))}")
-
-    @property
-    def tempdir(self):
-        if self._tempdir is None:
-            self._tempdir = tempfile.TemporaryDirectory(prefix="uo-sp-")
-            self.debug(f"Created temporary workspace {self._tempdir.name}")
-        return Path(self._tempdir.name)
 
     def debug(self, s):
         if self.args.debug:
@@ -189,8 +166,7 @@ class UOSiegePerilousLauncher:
 
     def save_config(self):
         with open(self.CONFIG_PATH, "w") as file:
-            json.dump(self.config, file, indent=2, sort_keys=True)
-            file.write("\n")
+            json.dump(self.config, file)
         self.debug(f"Config saved: {dumps(self.config)}")
 
     def load_config(self):
@@ -220,30 +196,10 @@ class UOSiegePerilousLauncher:
         if not self.args.skip_mono_check and self.config["razor"] and not shutil.which(self.MONO_EXE):
             print(
                 "Mono is required for the use of Razor. Visit https://www.mono-project.com/ for\n"
-                "installation info. We recommend you install mono and run again. However, if you\n"
-                "want to install Razor, skip this prompt with the --skip-mono-check argument.\n"
+                "installation info. We recommend you install mono and run again. However, You can\n"
+                "skip this prompt with argument --skip-mono-check\n"
             )
-            release_file = Path('/etc/os-release')
-            if release_file.exists():
-                distro = None
-                with open(release_file, 'r') as file:
-                    for line in file:
-                        if line.startswith('ID='):
-                            distro = line[3:].strip().lower()
-                            break
-
-                if distro in ('ubuntu', 'debian', 'arch'):
-                    if distro in ('ubuntu', 'debian'):
-                        print(
-                            f"You can do that on {distro.title()} Linux by running the command,\n\n"
-                            "    sudo apt-get install mono-complete\n"
-                        )
-                    elif distro == 'arch':
-                        print(
-                            f"You can do that on Arch Linux by running the command as root,\n\n"
-                            "    pacman -S mono\n"
-                        )
-            if yesno(f"Would you like to run {font('WITHOUT', (FONT_RED, FONT_BOLD))} Razor", default=False):
+            if yesno("Would you like to run without Razor (not recommended)?", default=False):
                 self.config["razor"] = False
                 self.save_config()
             else:
@@ -253,17 +209,13 @@ class UOSiegePerilousLauncher:
     def set_paths(self):
         self.install_path = Path(self.config["install_path"])
         self.cuo_path = self.install_path / "classicuo"
-        self.cuo_exec = self.cuo_path / "ClassicUO"
         self.razor_path = self.cuo_path / "Data" / "Plugins" / "Razor"
         self.client_path = self.install_path / "ai-golden-client"
         self.icon_path = self.HOME_DIR / ".local" / "share" / "icons" / "uo-siege-perilous.png"
         self.launcher_path = self.HOME_DIR / ".local" / "share" / "applications" / "uo-siege-perilous.desktop"
-        self.launcher = self.LAUNCHER_TEMPLATE.format(cuo_exec=self.cuo_exec, cuo_path=self.cuo_path)
-        for var in ("install_path", "cuo_path", "cuo_exec", "razor_path", "client_path", "icon_path", "launcher_path"):
-            self.debug(f"Set variable {var}: {getattr(self, var)!r}")
 
         if not self.install_path.exists():
-            if yesno(f"Install path {self.install_path} does not exist. Create it"):
+            if yesno(f"Install path {self.install_path} does not exist. Create it?"):
                 self.mkdir(self.install_path)
                 self.debug(f"{self.install_path} created")
             else:
@@ -370,7 +322,7 @@ class UOSiegePerilousLauncher:
     def get_remote_razor_release(self):
         if self._remote_razor_release is None:
             try:
-                razor_release_path = self.tempdir / "razor-release.json"
+                razor_release_path = self.tempdir / "razor-release.txt"
                 download(self.RAZOR_RELEASE_URL, razor_release_path, name="Razor release info")
 
                 with open(razor_release_path, "r") as file:
@@ -419,52 +371,12 @@ class UOSiegePerilousLauncher:
         else:
             print("Not updating Razor Community Edition.")
 
-    def verify_launcher_and_icon(self):
-        update_requested = self.args.update or self.args.force_update or self.args.force_delete_and_reinstall
-        did_run = False
-
-        if update_requested or not self.launcher_path.exists():
-            did_run = True
-            print("Installing updated desktop launcher.")
-            self.mkdir(self.launcher_path.parent)
-            with open(self.launcher_path, 'w') as file:
-                file.write(self.launcher)
-
-        if update_requested or not self.icon_path.exists():
-            did_run = True
-            print("Installing updated desktop launcher icon.")
-            icon_dl_path = self.tempdir / "icon.png"
-            download(self.ICON_URL, icon_dl_path, name="icon")
-            self.mkdir(self.icon_path.parent)
-            shutil.move(icon_dl_path, self.icon_path)
-
-        if not did_run:
-            print("Not updating desktop launcher.")
-
-    def update_classicuo_settings(self):
-        print("Configuring ClassicUO for launch")
-
-        settings = {}
-        required_settings = {
-            "ultimaonlinedirectory": str(self.client_path),
-            "ip": self.AI_ADDR,
-            "port": self.AI_PORT,
-            "plugins": ["Razor/Razor.exe"] if self.config["razor"] else [],
-        }
-
-        settings_path = self.cuo_path / "settings.json"
-        if settings_path.exists():
-            with open(settings_path, 'r') as file:
-                settings = json.load(file)
-        settings.update(required_settings)
-
-        with open(settings_path, 'w') as file:
-            json.dump(settings, file, indent=2, sort_keys=True)
-
-    def launch(self):
-        print("Launching!")
-        os.chdir(self.cuo_path)
-        os.execl(self.cuo_exec, self.cuo_exec)
+    @property
+    def tempdir(self):
+        if self._tempdir is None:
+            self._tempdir = tempfile.TemporaryDirectory(prefix="uo-sp-")
+            self.debug(f"Created temporary workspace {self._tempdir.name}")
+        return Path(self._tempdir.name)
 
     def main(self):
         self.parse_args()
@@ -477,10 +389,6 @@ class UOSiegePerilousLauncher:
             print(dumps(self.config))
             sys.exit(0)
 
-        if self.args.uninstall:
-            print("Uninstall not yet implemented!")
-            sys.exit(0)
-
         self.mono_check()
         self.set_paths()
         self.verify_classicuo()
@@ -488,14 +396,6 @@ class UOSiegePerilousLauncher:
 
         if self.config["razor"]:
             self.verify_razor()
-
-        self.update_classicuo_settings()
-        self.verify_launcher_and_icon()
-
-        if not self.args.skip_launch:
-            self.launch()
-        else:
-            print("Skipping launch. Done.")
 
 
 if __name__ == "__main__":
