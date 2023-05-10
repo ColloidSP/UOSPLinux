@@ -52,33 +52,6 @@ def font(s, mods):
         s = f"\033[{mod}m{s}"
     return f"{s}\033[0m"
 
-
-def download(url, path, name=None):
-    if name is None:
-        name = path.name
-
-    did_report_progress = False
-
-    def reporthook(count, block_size, total_size):
-        nonlocal did_report_progress
-
-        if total_size > -1:
-            did_report_progress = True
-            done = min(count * block_size / total_size, 1)
-
-            line_begin = f"Getting {name} ["
-            line_end = f"] {round(done * 100, 1): >5.1f}%"
-            bar_width = 80 - len(line_begin) - len(line_end)
-            bar = f"{'=' * int(bar_width * done)}".ljust(bar_width)
-            print(f"{line_begin}{bar}{line_end}", end="\r", flush=True)
-
-        elif count == 0:
-            print(f"Getting {name}...")
-
-    urllib.request.urlretrieve(url, path, reporthook)
-    if did_report_progress:
-        print()
-
 def md5sum_file(file):
     if file.exists():
         with open(file, "rb") as f:
@@ -203,6 +176,33 @@ class UOSiegePerilousLauncher:
             d.mkdir(parents=True, exist_ok=True)
             self.debug(f"Created directory: {d}")
 
+    def download(self, url, path, name=None):
+        if name is None:
+            name = path.name
+
+        did_report_progress = False
+
+        def reporthook(count, block_size, total_size):
+            nonlocal did_report_progress
+
+            if total_size > -1:
+                did_report_progress = True
+                done = min(count * block_size / total_size, 1)
+
+                line_begin = f"Getting {name} ["
+                line_end = f"] {round(done * 100, 1): >5.1f}%"
+                bar_width = 80 - len(line_begin) - len(line_end)
+                bar = f"{'=' * int(bar_width * done)}".ljust(bar_width)
+                print(f"{line_begin}{bar}{line_end}", end="\r", flush=True)
+
+            elif count == 0:
+                print(f"Getting {name}...")
+
+        self.debug(f"Downloading {url}")
+        urllib.request.urlretrieve(url, path, reporthook)
+        if did_report_progress:
+            print()
+
     def save_config(self):
         with open(self.CONFIG_PATH, "w") as file:
             json.dump(self.config, file, indent=2, sort_keys=True)
@@ -297,7 +297,7 @@ class UOSiegePerilousLauncher:
             print("Checking if launcher needs an update.")
             local_md5sum = md5sum_file(self.command_path)
             possible_updated_cmd_file = self.tempdir / "possible-updated-command"
-            download(self.UPDATE_URL, possible_updated_cmd_file, "launcher update info")
+            self.download(self.UPDATE_URL, possible_updated_cmd_file, "launcher update info")
             remote_md5sum = md5sum_file(possible_updated_cmd_file)
             self.debug(f"Local launcher md5sum: {local_md5sum}")
             self.debug(f"Remote launcher md5sum: {remote_md5sum}")
@@ -333,7 +333,7 @@ class UOSiegePerilousLauncher:
         if not should_update and self.args.update:
             print("Checking for ClassicUO updates.")
             manifest_path = self.tempdir / "cuo-manifest.xml"
-            download(self.CUO_MANIFEST_URL, manifest_path, name="ClassicUO file manifest")
+            self.download(self.CUO_MANIFEST_URL, manifest_path, name="ClassicUO file manifest")
 
             try:
                 for file_elem in ElementTree.parse(manifest_path).getroot()[0][0]:
@@ -353,7 +353,7 @@ class UOSiegePerilousLauncher:
         if should_update:
             print("Downloading updated ClassicUO client.")
             cuo_zip_path = self.tempdir / "classicuo.zip"
-            download(self.CUO_DOWNLOAD_URL, cuo_zip_path, name="ClassicUO client")
+            self.download(self.CUO_DOWNLOAD_URL, cuo_zip_path, name="ClassicUO client")
 
             if self.args.force_delete_and_reinstall:
                 self.debug(f"Force deleting {self.cuo_path}")
@@ -373,7 +373,7 @@ class UOSiegePerilousLauncher:
         if self._remote_client_version is None:
             try:
                 pkg_versions_path = self.tempdir / "ai-packageversions.txt"
-                download(self.AI_PKG_VERSIONS_URL, pkg_versions_path, name="Angel Island package versions")
+                self.download(self.AI_PKG_VERSIONS_URL, pkg_versions_path, name="Angel Island package versions")
 
                 with open(pkg_versions_path, "r") as file:
                     pkg_versions = [s.strip() for s in file.read().splitlines()]
@@ -407,7 +407,7 @@ class UOSiegePerilousLauncher:
 
             # Download these two in rapid succession
             remote_version = self.get_remote_client_version()
-            download(self.CLIENT_DOWNLOAD_URL, client_zip_path, name='Angel Island "Golden Client"')
+            self.download(self.CLIENT_DOWNLOAD_URL, client_zip_path, name='Angel Island "Golden Client"')
 
             print('Installing new Angel Island "Golden Client" files.')
             self.mkdir(client_tmp_path)
@@ -428,7 +428,7 @@ class UOSiegePerilousLauncher:
         if self._remote_razor_release is None:
             try:
                 razor_release_path = self.tempdir / "razor-release.json"
-                download(self.RAZOR_RELEASE_URL, razor_release_path, name="Razor release info")
+                self.download(self.RAZOR_RELEASE_URL, razor_release_path, name="Razor release info")
 
                 with open(razor_release_path, "r") as file:
                     release = json.load(file)
@@ -463,7 +463,7 @@ class UOSiegePerilousLauncher:
                 print("Can't download Razor without release info, which had errors.")
             else:
                 razor_zip_path = self.tempdir / "razor.zip"
-                download(remote_url, razor_zip_path, name="Razor")
+                self.download(remote_url, razor_zip_path, name="Razor")
 
                 # Force delete would have already cleared CUO folder
                 self.mkdir(self.razor_path)
@@ -491,7 +491,7 @@ class UOSiegePerilousLauncher:
             did_run = True
             print("Installing updated desktop launcher icon.")
             icon_dl_path = self.tempdir / "icon.png"
-            download(self.ICON_URL, icon_dl_path, name="icon")
+            self.download(self.ICON_URL, icon_dl_path, name="icon")
             self.mkdir(self.icon_path.parent)
             shutil.move(icon_dl_path, self.icon_path)
 
