@@ -23,7 +23,8 @@ uo-siege-perilous-launcher --update
 ## Words of Warning
 
 **This code is currently in an alpha state! It works great for me, but reach out
-to Colloid on Discord to help with testing.**
+to Colloid on the [UO:SP Discord](https://discord.gg/GwRuSV9vAb) to help with
+testing.**
 
 This launcher isn't officially supported by the UO:Siege Perilous team, however
 the owner of the shard and I have discussed it. It's safe to say you won't be
