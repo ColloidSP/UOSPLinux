@@ -52,6 +52,7 @@ def font(s, mods):
         s = f"\033[{mod}m{s}"
     return f"{s}\033[0m"
 
+
 def md5sum_file(file):
     if file.exists():
         with open(file, "rb") as f:
@@ -294,7 +295,7 @@ class UOSiegePerilousLauncher:
 
     def verify_up_to_date(self, called_by_self_update=False):
         if self.args.update or called_by_self_update:
-            print("Checking if launcher needs an update.")
+            print("Checking if this launcher needs an update.")
             local_md5sum = md5sum_file(self.command_path)
             possible_updated_cmd_file = self.tempdir / "possible-updated-command"
             self.download(self.UPDATE_URL, possible_updated_cmd_file, "launcher update info")
@@ -303,14 +304,20 @@ class UOSiegePerilousLauncher:
             self.debug(f"Remote launcher md5sum: {remote_md5sum}")
             if called_by_self_update:
                 return local_md5sum == remote_md5sum
-            elif local_md5sum != remote_md5sum:
-                print(font("WARNING: UO:Siege Perilous launcher out of date! Use --self-update to update.", (FONT_BOLD, FONT_YELLOW)))
-
+            else:
+                if local_md5sum == remote_md5sum:
+                    print("This launcher is up to date!")
+                else:
+                    print(
+                        font(
+                            "WARNING: This launcher out of date! Use --self-update to update.", (FONT_BOLD, FONT_YELLOW)
+                        )
+                    )
 
     def self_update(self):
         print("Running self update.")
         if self.verify_up_to_date(called_by_self_update=True):
-            print("Launcher is already up to date! Exiting.")
+            print("This launcher is already up to date! Exiting.")
         else:
             print("Update required! Performing it.")
             if not os.access(self.command_path, os.W_OK):
@@ -325,7 +332,7 @@ class UOSiegePerilousLauncher:
                 file.write(launcher_script)
             os.chmod(self.command_path, 0o755)
 
-            print("Done!")
+            print("Done. This launcher is up to date!")
 
     def verify_classicuo(self):
         should_update = self.args.force_update or self.args.force_delete_and_reinstall or not self.cuo_path.exists()
