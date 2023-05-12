@@ -79,6 +79,7 @@ class UOSiegePerilousLauncher:
     UNKNOWN = "unknown"
     DEFAULT_CONFIG = {
         "client_version": UNKNOWN,
+        "launch": True,
         "install_path": str(HOME_DIR / "games" / "uo-siege-perilous"),
         "razor": True,
         "razor_version": UNKNOWN,
@@ -129,11 +130,15 @@ class UOSiegePerilousLauncher:
         update = parser.add_mutually_exclusive_group()
         update.add_argument("-u", "--update", action="store_true", help="check for update")
         parser.add_argument("-s", "--self-update", action="store_true", help="update this script to the latest version")
-        parser.add_argument(
+        launch = parser.add_mutually_exclusive_group()
+        launch.add_argument(
+            "-l", "--launch", action="store_true", help="launch client at end, remembered for next time (the default)"
+        )
+        launch.add_argument(
             "-S",
             "--skip-launch",
             action="store_true",
-            help="run but don't launch client, useful for only updating or installing",
+            help="run but don't launch client, useful for only updating or installing, remembered for next time",
         )
         parser.add_argument("-p", "--print-config", action="store_true", help="print current configuration and exit")
         parser.add_argument("-v", "--versions", action="store_true", help="print versions of everything and exit")
@@ -539,9 +544,15 @@ class UOSiegePerilousLauncher:
         print("UO:Siege Perilous uninstalled!")
 
     def launch(self):
-        print("Launching!")
-        os.chdir(self.cuo_path)
-        os.execl(self.cuo_exec, self.cuo_exec)
+        if self.args.launch or self.args.skip_launch:
+            self.config["launch"] = self.args.launch or not self.args.skip_launch
+            self.save_config()
+        if self.config["launch"]:
+            print("Launching!")
+            os.chdir(self.cuo_path)
+            os.execl(self.cuo_exec, self.cuo_exec)
+        else:
+            print("Skipping launch. Done.")
 
     def print_config(self):
         print(f"Launcher config: {dumps(self.config)}")
@@ -626,10 +637,7 @@ class UOSiegePerilousLauncher:
         self.update_classicuo_settings()
         self.verify_launcher_and_icon()
 
-        if not self.args.skip_launch:
-            self.launch()
-        else:
-            print("Skipping launch. Done.")
+        self.launch()
 
 
 if __name__ == "__main__":
