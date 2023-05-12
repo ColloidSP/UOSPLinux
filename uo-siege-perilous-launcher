@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -135,6 +136,7 @@ class UOSiegePerilousLauncher:
             help="run but don't launch client, useful for only updating or installing",
         )
         parser.add_argument("-p", "--print-config", action="store_true", help="print current configuration and exit")
+        parser.add_argument("-v", "--versions", action="store_true", help="print versions of everything and exit")
         parser.add_argument(
             "--install-path", metavar="/path.to/uo/folder", help="override install directory, remembered for next time"
         )
@@ -274,6 +276,8 @@ class UOSiegePerilousLauncher:
         self.icon_path = self.HOME_DIR / ".local" / "share" / "icons" / "uo-siege-perilous.png"
         self.launcher_path = self.HOME_DIR / ".local" / "share" / "applications" / "uo-siege-perilous.desktop"
         self.launcher = self.LAUNCHER_TEMPLATE.format(cuo_exec=self.cuo_exec, cuo_path=self.cuo_path)
+        if self.args.versions:
+            self.exiftool_path = shutil.which("exiftool")
         for var in ("install_path", "cuo_path", "cuo_exec", "razor_path", "client_path", "icon_path", "launcher_path"):
             self.debug(f"Set variable {var}: {getattr(self, var)!r}")
 
@@ -539,17 +543,43 @@ class UOSiegePerilousLauncher:
         os.chdir(self.cuo_path)
         os.execl(self.cuo_exec, self.cuo_exec)
 
+    def print_config(self):
+        print(f'Launcher config: {dumps(self.config)}')
+
+    def get_exe_assembly_version(self, path):
+        if self.exiftool_path is None:
+            return f"unknown (exiftool required)"
+        else:
+            return subprocess.check_output((self.exiftool_path, '-AssemblyVersion', '-b', path), text=True).strip()
+
+    def print_versions(self):
+        self.set_paths(skip_prompt=True)
+
+        if self.exiftool_path is None:
+            print(font("WARNING: The command exiftool is needed to get version properly!", (FONT_BOLD, FONT_YELLOW)))
+
+        print("Versions:")
+        print(f" * ClassicUO: {self.get_exe_assembly_version(self.cuo_path / 'ClassicUO.exe')}")
+        if self.config["razor"]:
+           print(f" * Razor: {self.get_exe_assembly_version(self.razor_path / 'Razor.exe')}")
+        print(f' * Angel Island "Golden Client": {self.config["client_version"]}')
+
+
     def main(self):
         self.parse_args()
 
         self.load_config()
         self.update_config_from_args()
 
+        print(font("UO:Siege Perilous Linux Launcher\n", (FONT_BOLD, FONT_UNDERLINE)))
+
         if self.args.print_config:
-            print(dumps(self.config))
+            self.print_config()
             sys.exit(0)
 
-        print(font("UO:Siege Perilous Linux Launcher\n", (FONT_BOLD, FONT_UNDERLINE)))
+        if self.args.versions:
+            self.print_versions()
+            sys.exit()
 
         if not self.args.self_update:
             self.not_root_check()
