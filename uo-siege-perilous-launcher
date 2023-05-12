@@ -544,13 +544,13 @@ class UOSiegePerilousLauncher:
         os.execl(self.cuo_exec, self.cuo_exec)
 
     def print_config(self):
-        print(f'Launcher config: {dumps(self.config)}')
+        print(f"Launcher config: {dumps(self.config)}")
 
     def get_exe_assembly_version(self, path):
         if self.exiftool_path is None:
-            return f"unknown (exiftool required)"
+            return "unknown (exiftool required)"
         else:
-            return subprocess.check_output((self.exiftool_path, '-AssemblyVersion', '-b', path), text=True).strip()
+            return subprocess.check_output((self.exiftool_path, "-AssemblyVersion", "-b", path), text=True).strip()
 
     def print_versions(self):
         self.set_paths(skip_prompt=True)
@@ -561,9 +561,8 @@ class UOSiegePerilousLauncher:
         print("Versions:")
         print(f" * ClassicUO: {self.get_exe_assembly_version(self.cuo_path / 'ClassicUO.exe')}")
         if self.config["razor"]:
-           print(f" * Razor: {self.get_exe_assembly_version(self.razor_path / 'Razor.exe')}")
+            print(f" * Razor: {self.get_exe_assembly_version(self.razor_path / 'Razor.exe')}")
         print(f' * Angel Island "Golden Client": {self.config["client_version"]}')
-
 
     def main(self):
         self.parse_args()
