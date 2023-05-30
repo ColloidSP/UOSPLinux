@@ -111,14 +111,15 @@ class UOSiegePerilousLauncher:
     )
 
     # Hosted locally for faster development
-    if os.environ.get("UOSP_DEBUG_USE_LOCALHOST"):
-        CUO_MANIFEST_URL = "http://localhost:8000/cuo-manifest.xml"
-        CUO_DOWNLOAD_URL = "http://localhost:8000/classicuo.zip"
-        AI_PKG_VERSIONS_URL = "http://localhost:8000/ai-packageversions.txt"
-        CLIENT_DOWNLOAD_URL = "http://localhost:8000/ai-golden-client.zip"
-        RAZOR_RELEASE_URL = "http://localhost:8000/razor-latest.json"
-        ICON_URL = "http://localhost:8000/icon.png"
-        UPDATE_URL = "http://localhost:8000/uo-siege-perilous-launcher"
+    if alternate_debug_host := os.environ.get("UOSP_DEBUG_USE_HOST"):
+        CUO_MANIFEST_URL = f"http://{alternate_debug_host}/cuo-manifest.xml"
+        CUO_DOWNLOAD_URL = f"http://{alternate_debug_host}/classicuo.zip"
+        AI_PKG_VERSIONS_URL = f"http://{alternate_debug_host}/ai-packageversions.txt"
+        CLIENT_DOWNLOAD_URL = f"http://{alternate_debug_host}/ai-golden-client.zip"
+        RAZOR_RELEASE_URL = f"http://{alternate_debug_host}/razor-latest.json"
+        ICON_URL = f"http://{alternate_debug_host}/icon.png"
+        UPDATE_URL = f"http://{alternate_debug_host}/uo-siege-perilous-launcher"
+    del alternate_debug_host
 
     def __init__(self):
         self._remote_client_version = None
@@ -485,6 +486,18 @@ class UOSiegePerilousLauncher:
                 self.mkdir(self.razor_path)
                 print("Extracting Razor Community Edition files.")
                 unzip(razor_zip_path, self.razor_path)
+
+                # Fix for https://github.com/markdwags/Razor/issues/177#issuecomment-997214450
+                lang_dir = self.razor_path / 'Language'
+                for lang_filename in os.listdir(lang_dir):
+                    lang_filename = lang_dir / lang_filename
+                    with open(lang_filename, 'rb') as file:
+                        lang_contents = file.read()
+                    lang_contents = lang_contents.replace(b'MainForm::newProfile=&', b'MainForm::newProfile=')
+                    with open(lang_filename, 'wb') as file:
+                        file.write(lang_contents)
+                    self.debug(f"Patched {lang_filename}")
+
                 self.config["razor_version"] = remote_version
                 self.save_config()
 
