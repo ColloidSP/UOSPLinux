@@ -417,6 +417,8 @@ class UOSiegePerilousLauncher:
 
         if should_update:
             print('Downloading updated Angel Island "Golden Client".')
+            # https://stackoverflow.com/questions/8689938/extract-files-from-zip-without-keep-the-top-level-folder-with-python-zipfile
+            # no tempdir needed, can unzip without basename
             client_zip_path = self.tempdir / "ai-golden-client.zip"
             client_tmp_path = self.tempdir / "ai-golden-client"
             # It's inside a subdirectory of the zip
@@ -458,7 +460,7 @@ class UOSiegePerilousLauncher:
                     raise Exception("Error parsing Razor release")
             except Exception:
                 self._remote_razor_release = (self.UNKNOWN, None)
-                self.debug(f"Got an exception while parsing AI package versions\n{traceback.format_exc()}")
+                self.debug(f"Got an exception while parsing razor release versions\n{traceback.format_exc()}")
 
         return self._remote_razor_release
 
