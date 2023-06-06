@@ -1,3 +1,8 @@
+> **Warning**
+> 
+> Given a recent discussion on Discord, the Linux launcher may soon be blocked. Excercise caution, and if
+> you only have access to Linux and not Windows, I would advise _not_ starting a new account for now.
+
 <h1 align="center">
     <img src="https://raw.github.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png" width="100"><br>
     <a href="https://game-master.net/">UO:Siege Perilous</a> Linux Launcher
