@@ -1,7 +1,8 @@
 > **Warning**
-> 
-> Given a recent discussion on Discord, the Linux launcher may soon be blocked. Excercise caution, and if
-> you only have access to Linux and not Windows, I would advise _not_ starting a new account for now.
+>
+> Given a recent discussion on Discord, the Linux launcher may soon be blocked.
+> Exercise caution, and if you only have access to Linux and not Windows, I would
+> advise _not_ starting a new account for now.
 
 <h1 align="center">
     <img src="https://raw.github.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png" width="100"><br>
@@ -9,6 +10,9 @@
 </h1>
 
 Linux launcher script for the [UO:Siege Perilous](https://game-master.net/) shard.
+It installs and configures [ClassicUO](https://www.classicuo.eu/),
+[Razor Community Edition (CE)](https://www.razorce.com/), and the required
+Angel Island _"Golden Client"_ UO data files.
 
 ## TL;DR
 
@@ -89,8 +93,36 @@ uo-siege-perilous-launcher --help
 ## Requirements
 
 * Python 3 (which your system very likely has installed)
-* [Mono](https://www.mono-project.com/) &mdash; required for [Razor Community Edition](https://www.razorce.com/) only
+* [Mono](https://www.mono-project.com/) &mdash; required for
+  [Razor Community Edition](https://www.razorce.com/) only
 * Support for only the x86_64 platform, ie amd64 or 64-bit
+
+## Bonus: Running in Docker
+
+You can also run ClassicUO and Razor in a [Docker](https://www.docker.com/) container.
+The following uses the awesome
+[`accetto/ubuntu-vnc-xfce-opengl-g3`](https://github.com/accetto/headless-drawing-g3/blob/master/docker/xfce/README.md)
+image as its base.
+**This is for advanced users only who _already_ know how to use Docker.**
+
+```
+# Clone repository
+git clone https://github.com/ColloidSP/UOSPLinux.git
+cd UOSPLinux
+
+# Build container image
+docker build -t uo-siege-perilous .
+
+# Run container, exposing port 6901
+docker run --rm -d -p 6901:6901 -n uo-siege-perilous uo-siege-perilous
+
+# Stop container
+docker kill uo-siege-perilous
+```
+
+Then in your web browser head to <http://localhost:6901/>, and use the username
+and password `headless`. Using the [Xfce](https://www.xfce.org/) desktop, open
+_Applications > Games > UO:Siege Perilous_ and et voilà!
 
 ## License
 
