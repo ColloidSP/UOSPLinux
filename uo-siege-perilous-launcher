@@ -422,7 +422,6 @@ class UOSiegePerilousLauncher:
             client_zip_path = self.tempdir / "ai-golden-client.zip"
             client_tmp_path = self.tempdir / "ai-golden-client"
             # It's inside a subdirectory of the zip
-            client_tmp_subdir = client_tmp_path / self.CLIENT_ZIPFILE_SUBDIR_NAME
 
             # Download these two in rapid succession
             remote_version = self.get_remote_client_version()
@@ -432,10 +431,15 @@ class UOSiegePerilousLauncher:
             self.mkdir(client_tmp_path)
             unzip(client_zip_path, client_tmp_path)
 
+            # If the subdirectory exists (doesn't for "golden client" v2)
+            client_tmp_subdir = client_tmp_path / self.CLIENT_ZIPFILE_SUBDIR_NAME
+            if client_tmp_subdir.exists():
+                client_tmp_path = client_tmp_subdir
+
             self.debug(f"Deleting old client files {self.client_path}")
             shutil.rmtree(self.client_path, ignore_errors=True)
 
-            shutil.move(client_tmp_subdir, self.client_path)
+            shutil.move(client_tmp_path, self.client_path)
             self.config["client_version"] = remote_version
             self.save_config()
 
