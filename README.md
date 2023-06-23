@@ -1,9 +1,3 @@
-> **Warning**
->
-> Given a recent discussion on Discord, the Linux launcher may soon be blocked.
-> Exercise caution, and if you only have access to Linux and not Windows, I would
-> advise _not_ starting a new account for now.
-
 <h1 align="center">
     <img src="https://raw.github.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png" width="100"><br>
     <a href="https://game-master.net/">UO:Siege Perilous</a> Linux Launcher
@@ -37,7 +31,7 @@ testing.**
 
 This launcher isn't officially supported by the UO:Siege Perilous team, however
 the owner of the shard and I have discussed it. It's safe to say you won't be
-banned for using it. :smile:
+banned for using it, however the UO:Siege Perilous team could block unofficial clients at any time. Use this launcher at your own risk, and be prepared to have to use the official Windows client in event that that happens.
 
 ## Installation
 
