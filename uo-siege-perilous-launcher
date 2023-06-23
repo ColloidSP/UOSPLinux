@@ -79,6 +79,7 @@ class UOSiegePerilousLauncher:
     UNKNOWN = "unknown"
     DEFAULT_CONFIG = {
         "client_version": UNKNOWN,
+        "diff_version": UNKNOWN,
         "launch": True,
         "install_path": str(HOME_DIR / "games" / "uo-siege-perilous"),
         "razor": True,
@@ -90,6 +91,7 @@ class UOSiegePerilousLauncher:
     CUO_DOWNLOAD_URL = "https://www.classicuo.eu/dev/deploy/ClassicUO-dev-preview-release.zip"
     AI_PKG_VERSIONS_URL = "https://www.game-master.net/resources/packageversions.txt"
     CLIENT_DOWNLOAD_URL = "https://www.game-master.net/resources/AI_Golden_Client.zip"
+    CLIENT_DIFF_DOWNLOAD_URL = "https://www.game-master.net/resources/Diff.zip"
     CLIENT_ZIPFILE_SUBDIR_NAME = "AI_Golden_Client"
     RAZOR_RELEASE_URL = "https://api.github.com/repos/markdwags/Razor/releases/latest"
     ICON_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png"
@@ -116,6 +118,7 @@ class UOSiegePerilousLauncher:
         CUO_DOWNLOAD_URL = f"http://{alternate_debug_host}/classicuo.zip"
         AI_PKG_VERSIONS_URL = f"http://{alternate_debug_host}/ai-packageversions.txt"
         CLIENT_DOWNLOAD_URL = f"http://{alternate_debug_host}/ai-golden-client.zip"
+        CLIENT_DIFF_DOWNLOAD_URL = f"http://{alternate_debug_host}/ai-client-diff.zip"
         RAZOR_RELEASE_URL = f"http://{alternate_debug_host}/razor-latest.json"
         ICON_URL = f"http://{alternate_debug_host}/icon.png"
         UPDATE_URL = f"http://{alternate_debug_host}/uo-siege-perilous-launcher"
@@ -396,24 +399,27 @@ class UOSiegePerilousLauncher:
                     pkg_versions = [s.strip() for s in file.read().splitlines()]
                     pkg_versions = [s for s in pkg_versions if s and not s.startswith("#")]
                     # Per comment in this file, first entry is the UO client version
-                    self._remote_client_version = pkg_versions[0]
+                    self._remote_client_version = (pkg_versions[0], pkg_versions[3])
                     self.debug(f"Got remote client version {self._remote_client_version}")
             except Exception:
-                self._remote_client_version = self.UNKNOWN
+                self._remote_client_version = (self.UNKNOWN, self.UNKNOWN)
                 self.debug(f"Got an exception while parsing AI package versions\n{traceback.format_exc()}")
 
         return self._remote_client_version
 
     def verify_client(self):
-        should_update = self.args.force_update or self.args.force_delete_and_reinstall or not self.client_path.exists()
+        should_update = should_apply_diff = self.args.force_update or self.args.force_delete_and_reinstall or not self.client_path.exists()
         if not should_update and self.args.update:
             print('Checking for Angel Island "Golden Client" updates.')
-            remote_version = self.get_remote_client_version()
+            remote_version, remote_diff_version = self.get_remote_client_version()
             if remote_version == self.UNKNOWN:
                 print("Error checking client for updates. Run with --force-update to force an update.")
             elif remote_version != self.config["client_version"]:
-                should_update = True
+                should_update = should_apply_diff = True
                 print('Angel Island "Golden Client" update required.')
+            elif remote_diff_version != self.config["diff_version"]:
+                should_apply_diff = True
+                print('Angel Island "Golden Client" update required (diff only).')
 
         if should_update:
             print('Downloading updated Angel Island "Golden Client".')
@@ -421,17 +427,16 @@ class UOSiegePerilousLauncher:
             # no tempdir needed, can unzip without basename
             client_zip_path = self.tempdir / "ai-golden-client.zip"
             client_tmp_path = self.tempdir / "ai-golden-client"
-            # It's inside a subdirectory of the zip
 
             # Download these two in rapid succession
-            remote_version = self.get_remote_client_version()
+            remote_version, _ = self.get_remote_client_version()
             self.download(self.CLIENT_DOWNLOAD_URL, client_zip_path, name='Angel Island "Golden Client"')
 
             print('Installing new Angel Island "Golden Client" files.')
             self.mkdir(client_tmp_path)
             unzip(client_zip_path, client_tmp_path)
 
-            # If the subdirectory exists (doesn't for "golden client" v2)
+            # If the subdirectory exists (doesn't for "golden client" v2 and v3)
             client_tmp_subdir = client_tmp_path / self.CLIENT_ZIPFILE_SUBDIR_NAME
             if client_tmp_subdir.exists():
                 client_tmp_path = client_tmp_subdir
@@ -441,11 +446,26 @@ class UOSiegePerilousLauncher:
 
             shutil.move(client_tmp_path, self.client_path)
             self.config["client_version"] = remote_version
+            self.config["diff_version"] = self.UNKNOWN
             self.save_config()
 
             print('Angel Island "Golden Client" now up to date!')
         else:
             print('Not updating Angel Island "Golden Client".')
+
+        if should_apply_diff:
+            diff_zip_path = self.tempdir / "ai-client-diff.zip"
+
+            _, remote_diff_version = self.get_remote_client_version()
+            self.download(self.CLIENT_DIFF_DOWNLOAD_URL, diff_zip_path, name='Angel Island "Golden Client" diff')
+            unzip(diff_zip_path, self.client_path)
+
+            self.config["diff_version"] = remote_diff_version
+            self.save_config()
+
+            print('Angel Island "Golden Client" diff now up to date!')
+        else:
+            print('Not updating Angel Island "Golden Client" diff.')
 
     def get_remote_razor_release(self):
         if self._remote_razor_release is None:
