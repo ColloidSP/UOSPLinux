@@ -94,6 +94,7 @@ class UOSiegePerilousLauncher:
     CLIENT_DIFF_DOWNLOAD_URL = "https://www.game-master.net/resources/Diff.zip"
     CLIENT_ZIPFILE_SUBDIR_NAME = "AI_Golden_Client"
     RAZOR_RELEASE_URL = "https://api.github.com/repos/markdwags/Razor/releases/latest"
+    RAZOR_DOWNLOAD_URL = None  # Get from latest above JSON if None
     ICON_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png"
     UPDATE_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-launcher"
 
@@ -122,6 +123,7 @@ class UOSiegePerilousLauncher:
         RAZOR_RELEASE_URL = f"http://{alternate_debug_host}/razor-latest.json"
         ICON_URL = f"http://{alternate_debug_host}/icon.png"
         UPDATE_URL = f"http://{alternate_debug_host}/uo-siege-perilous-launcher"
+        RAZOR_DOWNLOAD_URL = f"http://{alternate_debug_host}/razor-x64-latest.zip"
     del alternate_debug_host
 
     def __init__(self):
@@ -323,7 +325,8 @@ class UOSiegePerilousLauncher:
                 else:
                     print(
                         font(
-                            "WARNING: This launcher out of date! Use --self-update to update.", (FONT_BOLD, FONT_YELLOW)
+                            "WARNING: This launcher out of date! Use --self-update as root to update.",
+                            (FONT_BOLD, FONT_YELLOW),
                         )
                     )
 
@@ -408,7 +411,9 @@ class UOSiegePerilousLauncher:
         return self._remote_client_version
 
     def verify_client(self):
-        should_update = should_apply_diff = self.args.force_update or self.args.force_delete_and_reinstall or not self.client_path.exists()
+        should_update = should_apply_diff = (
+            self.args.force_update or self.args.force_delete_and_reinstall or not self.client_path.exists()
+        )
         if not should_update and self.args.update:
             print('Checking for Angel Island "Golden Client" updates.')
             remote_version, remote_diff_version = self.get_remote_client_version()
@@ -478,7 +483,10 @@ class UOSiegePerilousLauncher:
 
                 for asset in release["assets"]:
                     if "x64" in asset["name"]:
-                        self._remote_razor_release = (release["tag_name"], asset["browser_download_url"])
+                        download_url = asset["browser_download_url"]
+                        if self.RAZOR_DOWNLOAD_URL is not None:
+                            download_url = self.RAZOR_DOWNLOAD_URL
+                        self._remote_razor_release = (release["tag_name"], download_url)
                         break
                 else:
                     raise Exception("Error parsing Razor release")
@@ -514,13 +522,13 @@ class UOSiegePerilousLauncher:
                 unzip(razor_zip_path, self.razor_path)
 
                 # Fix for https://github.com/markdwags/Razor/issues/177#issuecomment-997214450
-                lang_dir = self.razor_path / 'Language'
+                lang_dir = self.razor_path / "Language"
                 for lang_filename in os.listdir(lang_dir):
                     lang_filename = lang_dir / lang_filename
-                    with open(lang_filename, 'rb') as file:
+                    with open(lang_filename, "rb") as file:
                         lang_contents = file.read()
-                    lang_contents = lang_contents.replace(b'MainForm::newProfile=&', b'MainForm::newProfile=')
-                    with open(lang_filename, 'wb') as file:
+                    lang_contents = lang_contents.replace(b"MainForm::newProfile=&", b"MainForm::newProfile=")
+                    with open(lang_filename, "wb") as file:
                         file.write(lang_contents)
                     self.debug(f"Patched {lang_filename}")
 
