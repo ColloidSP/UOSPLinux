@@ -68,7 +68,7 @@ To check for UO:Siege Perilous updates run,
 uo-siege-perilous-launcher --update
 ```
 
-## Updates to the launcher command
+## Self-Updating the Launcher
 
 To update this command, run as root,
 
