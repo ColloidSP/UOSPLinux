@@ -86,7 +86,7 @@ uo-siege-perilous-launcher --help
 
 ## Requirements
 
-* Python 3 (which your system very likely has installed)
+* Python 3.8 or later (which your system very likely has installed)
 * [Mono](https://www.mono-project.com/) &mdash; required for
   [Razor Community Edition](https://www.razorce.com/) only
 * Support for only the x86_64 platform, ie amd64 or 64-bit
