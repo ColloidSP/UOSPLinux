@@ -84,6 +84,7 @@ class UOSiegePerilousLauncher:
         "install_path": str(HOME_DIR / "games" / "uo-siege-perilous"),
         "razor": True,
         "razor_version": UNKNOWN,
+        "use_razor_dev": True,
     }
     AI_ADDR = "uoangelisland.com"
     AI_PORT = "2593"
@@ -93,7 +94,7 @@ class UOSiegePerilousLauncher:
     CLIENT_DOWNLOAD_URL = "https://www.game-master.net/resources/AI_Golden_Client.zip"
     CLIENT_DIFF_DOWNLOAD_URL = "https://www.game-master.net/resources/Diff.zip"
     CLIENT_ZIPFILE_SUBDIR_NAME = "AI_Golden_Client"
-    RAZOR_RELEASE_URL = "https://api.github.com/repos/markdwags/Razor/releases/latest"
+    RAZOR_RELEASE_URL = "https://api.github.com/repos/markdwags/Razor/releases"
     RAZOR_DOWNLOAD_URL = None  # Get from latest above JSON if None
     ICON_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png"
     UPDATE_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-launcher"
@@ -120,7 +121,7 @@ class UOSiegePerilousLauncher:
         AI_PKG_VERSIONS_URL = f"http://{alternate_debug_host}/ai-packageversions.txt"
         CLIENT_DOWNLOAD_URL = f"http://{alternate_debug_host}/ai-golden-client.zip"
         CLIENT_DIFF_DOWNLOAD_URL = f"http://{alternate_debug_host}/ai-client-diff.zip"
-        RAZOR_RELEASE_URL = f"http://{alternate_debug_host}/razor-latest.json"
+        RAZOR_RELEASE_URL = f"http://{alternate_debug_host}/razor-releases.json"
         ICON_URL = f"http://{alternate_debug_host}/icon.png"
         UPDATE_URL = f"http://{alternate_debug_host}/uo-siege-perilous-launcher"
         RAZOR_DOWNLOAD_URL = f"http://{alternate_debug_host}/razor-x64-latest.zip"
@@ -156,6 +157,17 @@ class UOSiegePerilousLauncher:
             "--with-razor", action="store_true", help="run with Razor (the default), remembered for next time"
         )
         razor.add_argument("--without-razor", action="store_true", help="run without Razor, remembered for next time")
+        razor_version = parser.add_mutually_exclusive_group()
+        razor_version.add_argument(
+            "--use-razor-dev",
+            action="store_true",
+            help="use latest dev version of Razor (the default), remembered for next time",
+        )
+        razor_version.add_argument(
+            "--use-razor-stable",
+            action="store_true",
+            help="use latest stable version of Razor, remembered for next time",
+        )
         update.add_argument("-f", "--force-update", action="store_true", help="force an update (reinstalls everything)")
         update.add_argument(
             "--force-delete-and-reinstall",
@@ -475,18 +487,26 @@ class UOSiegePerilousLauncher:
     def get_remote_razor_release(self):
         if self._remote_razor_release is None:
             try:
-                razor_release_path = self.tempdir / "razor-release.json"
+                razor_release_path = self.tempdir / "razor-releases.json"
                 self.download(self.RAZOR_RELEASE_URL, razor_release_path, name="Razor release info")
 
                 with open(razor_release_path, "r") as file:
-                    release = json.load(file)
+                    releases = json.load(file)
+
+                for release in releases:
+                    # If dev, then it must be a pre-release. If stable, it must not be a pre-release
+                    if self.config["use_razor_dev"] == release["prerelease"]:
+                        break
+                else:
+                    raise Exception("No Razor releases found!")
 
                 for asset in release["assets"]:
                     if "x64" in asset["name"]:
                         download_url = asset["browser_download_url"]
+                        version_key = "created_at" if self.config["use_razor_dev"] else "tag_name"
                         if self.RAZOR_DOWNLOAD_URL is not None:
                             download_url = self.RAZOR_DOWNLOAD_URL
-                        self._remote_razor_release = (release["tag_name"], download_url)
+                        self._remote_razor_release = (release[version_key], download_url)
                         break
                 else:
                     raise Exception("Error parsing Razor release")
@@ -498,8 +518,18 @@ class UOSiegePerilousLauncher:
 
     def verify_razor(self):
         should_update = self.args.force_update or self.args.force_delete_and_reinstall or not self.razor_path.exists()
+
+        if self.args.use_razor_dev or self.args.use_razor_stable:
+            config_value_before = self.config["use_razor_dev"]
+            self.config["use_razor_dev"] = self.args.use_razor_dev or not self.args.use_razor_stable
+            self.save_config()
+            if config_value_before != self.config["use_razor_dev"]:
+                self.debug(f"Switching razor channel: dev={self.config['use_razor_dev']}")
+                should_update = True
+
+        version_str = "dev" if self.config["use_razor_dev"] else "stable"
         if not should_update and self.args.update:
-            print("Checking for Razor Community Edition updates.")
+            print(f"Checking for Razor Community Edition ({version_str}) updates.")
             remote_version, _ = self.get_remote_razor_release()
             if remote_version == self.UNKNOWN:
                 print("Error checking Razor for updates. You may want to run without Razor or forced updates for now.")
@@ -508,7 +538,7 @@ class UOSiegePerilousLauncher:
                 print("Razor update required.")
 
         if should_update:
-            print("Downloading updated Razor Community Edition.")
+            print(f"Downloading updated Razor Community Edition ({version_str}).")
             remote_version, remote_url = self.get_remote_razor_release()
             if remote_version == self.UNKNOWN:
                 print("Can't download Razor without release info, which had errors.")
