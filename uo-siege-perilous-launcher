@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import traceback
 import urllib.request
 import xml.etree.ElementTree as ElementTree
@@ -581,6 +582,9 @@ class UOSiegePerilousLauncher:
             with open(self.launcher_path, "w") as file:
                 file.write(self.launcher)
 
+            launcher_str = f'    {textwrap.indent(self.launcher, "    ").strip()}'
+            self.debug(f'Wrote "Desktop" launcher to: {self.launcher_path}\n{launcher_str}')
+
         if update_requested or not self.icon_path.exists():
             did_run = True
             print("Installing updated desktop launcher icon.")
@@ -588,6 +592,7 @@ class UOSiegePerilousLauncher:
             self.download(self.ICON_URL, icon_dl_path, name="icon")
             self.mkdir(self.icon_path.parent)
             shutil.move(icon_dl_path, self.icon_path)
+            self.debug(f"Wrote icon to: {self.icon_path}")
 
         if not did_run:
             print("Not updating desktop launcher.")
