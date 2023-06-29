@@ -108,7 +108,7 @@ cd UOSPLinux
 docker build -t uo-siege-perilous .
 
 # Run container, exposing port 6901
-docker run --rm -d -p 6901:6901 -n uo-siege-perilous uo-siege-perilous
+docker run --rm -d -p 6901:6901 --name uo-siege-perilous uo-siege-perilous
 
 # Stop container
 docker kill uo-siege-perilous
