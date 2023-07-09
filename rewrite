@@ -1,0 +1,582 @@
+#!/usr/bin/env python3
+
+import argparse
+from collections import OrderedDict, namedtuple
+import datetime
+import hashlib
+import http.server
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import traceback
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ElementTree
+import zipfile
+
+
+FONT_RED = 31
+FONT_GREEN = 32
+FONT_YELLOW = 33
+FONT_BLUE = 34
+FONT_MAGENTA = 35
+FONT_CYAN = 36
+FONT_BOLD = 1
+FONT_UNDERLINE = 4
+
+SCREEN_WIDTH = 80
+
+
+def font(s, mods):
+    if isinstance(mods, int):
+        mods = (mods,)
+    for mod in mods:
+        s = f"\033[{mod}m{s}"
+    return f"{s}\033[0m"
+
+
+def dumps(d):
+    return json.dumps(d, indent=2, sort_keys=True)
+
+
+def md5sum_file(file):
+    if file.exists():
+        with open(file, "rb") as f:
+            data = f.read()
+        return hashlib.md5(data).hexdigest().lower()
+    else:
+        return False
+
+
+def check_md5sum(file, md5sum):
+    return md5sum_file(file) == md5sum.lower()
+
+
+def debug_http_server_thread(directory):
+    class RequestHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(directory=directory, *args, **kwargs)
+
+        def log_message(self, format, *args):
+            # Copied from http/server.py, add yellow color
+            message = format % args
+            sys.stderr.write(
+                font("%s - - [%s] %s\n", FONT_YELLOW)
+                % (self.address_string(), self.log_date_time_string(), message.translate(self._control_char_table))
+            )
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 8000), RequestHandler)
+    server.serve_forever()
+
+
+RazorRelease = namedtuple("RazorRelease", ("version", "url"))
+AIPackageVersions = namedtuple("AIPackageVersions", ("client", "diff"))
+
+
+class Installation:
+    INSTALLED_CHECK_PATHS = ()
+
+    def __init__(self, uosp):
+        self._uosp = uosp
+
+    def __str__(self):
+        return re.sub(r"([a-z])([A-Z])", r"\g<1> \g<2>", str(self.__class__.__name__))
+
+    def __getattr__(self, name):
+        if not name.startswith("_") and hasattr(self._uosp, name):
+            return getattr(self._uosp, name)
+        raise AttributeError(f"No attribute {name!r} on {self.__class__.__name__} or {self._uosp.__class__.__name__}")
+
+    def run(self):
+        print(font(f" {self} ".center(SCREEN_WIDTH, "="), FONT_BOLD))
+
+        if not self.is_installed():
+            print(f"{self} not found. Installing.")
+            needs_update = True
+        elif self.args.force_update:
+            print(f"Forcing update of {self}.")
+            needs_update = True
+        elif self.needs_update():
+            print(f"Update of {self} needed. Updating.")
+            needs_update = True
+        else:
+            print(f"No update of {self} needed!")
+            needs_update = False
+
+        if needs_update:
+            print(f"Downloading and updating {self}...")
+            self.update_or_install()
+            print(f"... Done. {self} now up to date!")
+
+    def is_installed(self):
+        print(f"Verifying {self} is installed...")
+        for path in self.INSTALLED_CHECK_PATHS:
+            path = Path(path)
+            if not path.is_absolute():
+                path = self.install_path / path
+            self.debug(f"Checking for {path}")
+            if not path.exists():
+                return False
+        return True
+
+    def needs_update(self):
+        raise NotImplementedError()
+
+    def update_or_install(self):
+        raise NotImplementedError()
+
+    def version(self):
+        raise NotImplementedError()
+
+
+class SelfUpdate:
+    pass
+
+
+class ClassicUO(Installation):
+    INSTALLED_CHECK_PATHS = ("classicuo/ClassicUO",)
+    UNINSTALL_PATHS = ("classicuo",)
+    MANIFEST_URL = "https://www.classicuo.eu/dev/deploy/manifest.xml"
+    DOWNLOAD_URL = "https://www.classicuo.eu/dev/deploy/ClassicUO-dev-preview-release.zip"
+
+    def __str__(self):
+        return "ClassicUO"
+
+    def needs_update(self):
+        path = self.download(self.MANIFEST_URL, "ClassicUO file manifest")
+        try:
+            for file_elem in ElementTree.parse(path).getroot()[0][0]:
+                file, md5sum = file_elem.attrib["filename"], file_elem.attrib["hash"]
+                if check_md5sum(self.cuo_path / Path(file), md5sum):
+                    self.debug(f"md5sum for {file}: passed.")
+                else:
+                    self.debug(f"md5sum for {file}: FAILED!!!")
+                    return True
+
+        except Exception:
+            self.debug(f"Got an exception while parsing the CUO manifest\n{traceback.format_exc()}")
+            print(font("Error checking ClassicUO for updates. Run with --force-update to force an update.", FONT_RED))
+
+        return False
+
+    def update_or_install(self):
+        path = self.download(self.DOWNLOAD_URL, name="ClassicUO client")
+        self.unzip(path, self.cuo_path)
+        os.chmod(self.cuo_path / "ClassicUO", 0o755)
+        os.chmod(self.cuo_path / "ClassicUO.bin.x86_64", 0o755)
+
+    def version(self):
+        return self.get_exe_assembly_version(self.cuo_path / "ClassicUO.exe")
+
+
+class RazorCommunityEdition(Installation):
+    INSTALLED_CHECK_PATHS = ("classicuo/Data/Plugins/Razor/Razor.exe",)
+    RELEASE_URL = "https://api.github.com/repos/markdwags/Razor/releases"
+
+    def needs_update(self):
+        release = self.get_latest_release()
+        if release.version == self.UNKNOWN:
+            print(font("Error checking Razor for release information.", FONT_RED))
+            return False
+        return release.version != self.config["razor_version"]
+
+    def get_latest_release(self):
+        if not hasattr(self, "_latest_release"):
+            try:
+                path = self.download(self.RELEASE_URL, "Razor release info", filename="razor-releases.json")
+                with open(path, "r") as file:
+                    releases = json.load(file)
+
+                for release in releases:
+                    # If dev, then it must be a pre-release. If stable, it must not be a pre-release
+                    if self.config["use_razor_dev"] == release["prerelease"]:
+                        break
+                else:
+                    raise Exception("No Razor releases found!")
+
+                for asset in release["assets"]:
+                    if "x64" in asset["name"]:
+                        download_url = asset["browser_download_url"]
+                        version_key = "created_at" if self.config["use_razor_dev"] else "tag_name"
+                        self._latest_release = RazorRelease(release[version_key], download_url)
+                        self.debug(f"Got remote razor version: {self._latest_release}")
+                        break
+                else:
+                    raise Exception("Error parsing Razor release")
+
+            except Exception:
+                self._latest_release = RazorRelease(self.UNKNOWN, None)
+                self.debug(f"Got an exception while parsing razor release versions\n{traceback.format_exc()}")
+
+        return self._latest_release
+
+    def update_or_install(self):
+        release = self.get_latest_release()
+        if release.version == self.UNKNOWN:
+            print(font("Can't update Razor without release information. Aborting.", FONT_RED))
+            sys.exit(1)
+
+        path = self.download(release.url, name="Razor")
+        self.unzip(path, self.cuo_path / "Data/Plugins/Razor")
+
+        self.config["razor_version"] = release.version
+        self.save_config()
+
+    def version(self):
+        return self.get_exe_assembly_version(self.cuo_path / "Data/Plugins/Razor/Razor.exe")
+
+
+class AngelIslandGoldenClient(Installation):
+    INSTALLED_CHECK_PATHS = ("ai-golden-client/client.exe",)
+    PKG_VERSIONS_URL = "https://www.game-master.net/resources/packageversions.txt"
+    CLIENT_DOWNLOAD_URL = "https://www.game-master.net/resources/AI_Golden_Client.zip"
+    DIFF_DOWNLOAD_URL = "https://www.game-master.net/resources/Diff.zip"
+
+    def needs_update(self):
+        release = self.get_latest_release()
+        if release.client == self.UNKNOWN or release.diff == self.UNKNOWN:
+            print(font("Error checking for Angel Island client release information.", FONT_RED))
+            return False
+        return release.client != self.config["client_version"] or release.diff != self.config["diff_version"]
+
+    def update_or_install(self):
+        release = self.get_latest_release()
+
+        if self.args.force_update or not self.is_installed() or release.client != self.config["client_version"]:
+            self.install_client()
+            self.install_diff()
+        elif release.diff != self.config["diff_version"]:
+            self.install_diff()
+
+    def install_client(self):
+        path = self.download(self.CLIENT_DOWNLOAD_URL, "Angel Island Client")
+        self.unzip(path, self.install_path / "ai-golden-client")
+        self.config["client_version"] = self.get_latest_release().client
+        self.save_config()
+
+    def install_diff(self):
+        path = self.download(self.DIFF_DOWNLOAD_URL, "Angel Island Client Patch", filename="AI_Golden_Client_Diff.zip")
+        self.unzip(path, self.install_path / "ai-golden-client")
+        self.config["diff_version"] = self.get_latest_release().diff
+        self.save_config()
+
+    def get_latest_release(self):
+        if not hasattr(self, "_latest_release"):
+            try:
+                path = self.download(self.PKG_VERSIONS_URL, "Angel Island package versions")
+
+                with open(path, "r") as file:
+                    pkg_versions = [s.strip() for s in file.read().splitlines()]
+                    pkg_versions = [s for s in pkg_versions if s and not s.startswith("#")]
+                    # Per comment in this file, first entry is the UO client version
+                    self._latest_release = AIPackageVersions(client=pkg_versions[0], diff=pkg_versions[3])
+                    self.debug(f"Got remote client version: {self._latest_release}")
+            except Exception:
+                self._latest_release = AIPackageVersions(self.UNKNOWN, self.UNKNOWN)
+                self.debug(f"Got an exception while parsing AI package versions\n{traceback.format_exc()}")
+        return self._latest_release
+
+    def version(self):
+        if self.config["client_version"] == self.UNKNOWN:
+            return self.UNKNOWN
+
+        return f"v{self.config['client_version']} (patch: v{self.config['diff_version']}) / UO Client: {self.get_exe_assembly_version(self.install_path / 'ai-golden-client/client.exe', tag_name='ProductVersionNumber')}"
+
+
+class LinuxDesktopLauncher(Installation):
+    pass
+
+
+class UOSiegePerilous:
+    UNKNOWN = "unknown"
+    HOME_DIR = Path("~").expanduser()
+    CONFIG_PATH = HOME_DIR / ".config" / "uo-siege-perilous.json"
+
+    DEFAULT_CONFIG = {
+        "client_version": UNKNOWN,
+        "diff_version": UNKNOWN,
+        "install_path": UNKNOWN,
+        "razor": UNKNOWN,
+        "razor_version": UNKNOWN,
+        "use_razor_dev": UNKNOWN,
+    }
+    CONFIG_PROMPTS = OrderedDict(
+        (
+            ("install_path", (str(HOME_DIR / "games" / "uo-siege-perilous"), "Path to install UO:Siege Perilous")),
+            ("razor", (True, "Install with Razor Community Edition")),
+            ("use_razor_dev", (True, "Use latest development preview of Razor (this is recommended)")),
+        )
+    )
+
+    def parse_args(self):
+        parser = argparse.ArgumentParser(description="Install or update UO:Siege Perilous.")
+        interactive = parser.add_mutually_exclusive_group()
+        interactive.add_argument("-i", "--interactive", action="store_true", help="run (or re-run) interactive setup")
+        interactive.add_argument("-y", "--yes", action="store_true", help="respond to all prompts with default answer")
+
+        action = parser.add_mutually_exclusive_group()
+        action.add_argument("-s", "--self-update", action="store_true", help="update this script to the latest version")
+        action.add_argument("-p", "--print-config", action="store_true", help="print current configuration and exit")
+        action.add_argument("-v", "--versions", action="store_true", help="print versions of everything and exit")
+        action.add_argument("-f", "--force-update", action="store_true", help="force a complete update")
+        action.add_argument(
+            "--reinstall",
+            action="store_true",
+            help="completely delete and reinstall (removes profiles/macros)",
+        )
+        action.add_argument(
+            "--uninstall", action="store_true", help="completely uninstall (backup your profile/macros!)"
+        )
+        parser.add_argument("-d", "--debug", action="store_true", help="run with verbose debug logging")
+        parser.add_argument("--debug-serve-from-local-folder", help=argparse.SUPPRESS)
+
+        self.args = parser.parse_args()
+        self.debug(f"Parsed args: {dumps(vars(self.args))}")
+
+    def debug(self, s):
+        if self.args.debug:
+            print(font(f"[{datetime.datetime.now()}] {s}", FONT_CYAN), file=sys.stderr)
+
+    def download(self, url, name, filename=None):
+        did_report_progress = False
+        if filename is None:
+            filename = Path(urllib.parse.urlparse(url).path).name
+
+        if self.args.debug_serve_from_local_folder is not None:
+            url = f"http://127.0.0.1:8000/{filename}"
+
+        path = self.tempdir / filename
+
+        def reporthook(count, block_size, total_size):
+            nonlocal did_report_progress
+
+            if total_size > -1:
+                did_report_progress = True
+                done = min(count * block_size / total_size, 1)
+
+                line_begin = f"Getting {name} ["
+                line_end = f"] {round(done * 100, 1): >5.1f}%"
+                bar_width = SCREEN_WIDTH - len(line_begin) - len(line_end)
+                bar = f"{'=' * int(bar_width * done)}".ljust(bar_width)
+                print(f"{line_begin}{bar}{line_end}", end="\r", flush=True)
+
+            elif count == 0:
+                print(f"Getting {name}...")
+
+        self.debug(f"Downloading {url}")
+        urllib.request.urlretrieve(url, path, reporthook)
+        if did_report_progress:
+            print()
+
+        self.debug(f"Downloaded {path} ({path.stat().st_size} bytes)")
+        return path
+
+    # Create a tarbomb from zipfile in folder, taken from https://stackoverflow.com/a/8691892
+    def _extractall_get_members(self, zip):
+        parts = []
+        for name in zip.namelist():
+            if not name.endswith("/"):
+                parts.append(name.split("/")[:-1])
+        prefix = os.path.commonprefix(parts)
+        if prefix:
+            prefix = "/".join(prefix) + "/"
+            self.debug(f"Stripping prefix {prefix!r} from {Path(zip.filename).name}")
+        offset = len(prefix)
+        for zipinfo in zip.infolist():
+            name = zipinfo.filename
+            if len(name) > offset:
+                zipinfo.filename = name[offset:]
+                yield zipinfo
+
+    def unzip(self, archive, path):
+        self.debug(f"Unzipping {archive}")
+        with zipfile.ZipFile(archive, "r") as zip:
+            zip.extractall(path, members=self._extractall_get_members(zip))
+
+    @property
+    def tempdir(self):
+        if not hasattr(self, "_tempdir"):
+            self._tempdir = tempfile.TemporaryDirectory(prefix="uo-sp-")
+            self.debug(f"Created temporary workspace {self._tempdir.name}")
+        return Path(self._tempdir.name)
+
+    def mkdir(self, d):
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            self.debug(f"Created directory: {d}")
+
+    def prompt_question(self, question, default=True):
+        if isinstance(default, str):
+            question = f"{question} [{default}]"
+        else:
+            if default:
+                question = f"{question} [Y/n]"
+            else:
+                question = f"{question} [y/N]"
+        question = f"{question}? "
+
+        if self.args.yes:
+            if isinstance(default, str):
+                response = default
+            else:
+                response = "Yes" if default else "No"
+            print(f"{question} {response}")
+        else:
+            response = input(question).strip()
+
+        if isinstance(default, str):
+            if not response:
+                print(f"====> Using default: {default}")
+                response = default
+        else:
+            if response[0:1].lower() == "y":
+                response = True
+            elif response[0:1].lower() == "n":
+                response = False
+            else:
+                print(f"====> Using default: {'Yes' if default else 'No'}")
+                response = default
+
+        return response
+
+    def load_config(self):
+        self.mkdir(self.CONFIG_PATH.parent)
+        self.config = self.DEFAULT_CONFIG.copy()
+        if self.CONFIG_PATH.exists():
+            self.debug(f"Config {self.CONFIG_PATH} found.")
+            with open(self.CONFIG_PATH, "r") as file:
+                self.config.update(json.load(file))
+        else:
+            self.debug(f"Config {self.CONFIG_PATH} not found! Using defaults.")
+        self.debug(f"Loaded config: {dumps(self.config)}")
+
+    def save_config(self):
+        with open(self.CONFIG_PATH, "w") as file:
+            json.dump(self.config, file, indent=2, sort_keys=True)
+            file.write("\n")
+        self.debug(f"Config {self.CONFIG_PATH} saved: {dumps(self.config)}")
+
+    def update_config_with_prompts(self):
+        for option, (default, question) in self.CONFIG_PROMPTS.items():
+            if self.config[option] == self.UNKNOWN or self.args.interactive:
+                self.config[option] = self.prompt_question(default=default, question=question)
+                self.debug(f"Set config {option}: {self.config[option]}")
+                self.save_config()
+
+    def do_uninstall(self):
+        question = "Are you SURE you want to "
+        if self.args.reinstall:
+            question += "COMPLETELY REMOVE and reinstall"
+        else:
+            question += "UNINSTALL"
+        question += (
+            f" UO:Siege Perilous,\nwhich will also {font('delete your profile and all Razor macros', FONT_BOLD)}"
+        )
+        if not self.prompt_question(question, default=False):
+            print(font("Aborting.", FONT_RED))
+            sys.exit(1)
+
+        uninstall_paths = (self.install_path,)
+
+        print("Completely removing...")
+        for path in uninstall_paths:
+            print(f" * {path}")
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+
+    def serve_local_folder(self):
+        directory = Path(self.args.debug_serve_from_local_folder)
+
+        if not directory.is_dir():
+            print(font(f"{directory} is not a valid directory!", FONT_RED))
+            sys.exit()
+        sys.stderr.write(font(f"Using local server in directory {directory}: http://127.0.0.1:8000/\n", FONT_YELLOW))
+
+        thread = threading.Thread(target=debug_http_server_thread, args=(directory,))
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.25)
+
+    def get_exe_assembly_version(self, path, tag_name="AssemblyVersion"):
+        if self.exiftool_path is None:
+            return "unknown (exiftool required)"
+        else:
+            try:
+                return subprocess.check_output(
+                    (self.exiftool_path, f"-{tag_name}", "-b", path), text=True, stderr=subprocess.PIPE
+                ).strip()
+            except subprocess.CalledProcessError as err:
+                self.debug(f"Error calling exiftool: {err.stderr.strip()}")
+                return "unknown"
+
+    def print_versions(self):
+        if self.exiftool_path is None:
+            print(font("WARNING: The command exiftool is needed to get version properly!", (FONT_BOLD, FONT_YELLOW)))
+
+        print("Versions:")
+        for installation in self.installations:
+            print(f" * {installation} - {installation.version()}")
+
+    def resolve_path(self, path):
+        path = Path(path)
+        if not path.is_absolute():
+            path = self.install_path / path
+        return path
+
+    def main(self):
+        self.parse_args()
+        self.load_config()
+        self.update_config_with_prompts()
+        self.install_path = Path(self.config["install_path"])
+        self.cuo_path = self.install_path / "classicuo"
+        self.exiftool_path = shutil.which("exiftool")
+
+        if self.args.print_config:
+            print(dumps(self.config))
+            sys.exit(0)
+
+        installation_classes = [ClassicUO]
+        if self.config["razor"]:
+            self.debug("Including Razor in installation classes")
+            installation_classes.append(RazorCommunityEdition)
+        installation_classes.extend(
+            [
+                AngelIslandGoldenClient,
+            ]
+        )
+
+        self.installations = [cls(uosp=self) for cls in installation_classes]
+
+        if self.args.versions:
+            self.print_versions()
+            sys.exit(0)
+
+        if self.args.uninstall or self.args.reinstall:
+            self.do_uninstall()
+            if self.args.uninstall:
+                sys.exit(0)
+
+        if self.args.debug_serve_from_local_folder is not None:
+            self.serve_local_folder()
+
+        # TODO: Do self update, prompt to continue if one is available
+
+        for installation in self.installations:
+            installation.run()
+
+
+if __name__ == "__main__":
+    uosp = UOSiegePerilous()
+    try:
+        uosp.main()
+    except KeyboardInterrupt:
+        print("\nAborting.")
