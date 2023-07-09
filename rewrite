@@ -32,6 +32,7 @@ FONT_BOLD = 1
 FONT_UNDERLINE = 4
 
 SCREEN_WIDTH = 80
+HOME_DIR = Path("~").expanduser()
 
 
 def font(s, mods):
@@ -96,8 +97,9 @@ class Installation:
 
     def run(self):
         print(font(f" {self} ".center(SCREEN_WIDTH, "="), FONT_BOLD))
+        already_installed = self.is_installed()
 
-        if not self.is_installed():
+        if not already_installed:
             print(f"{self} not found. Installing.")
             needs_update = True
         elif self.args.force_update:
@@ -111,8 +113,8 @@ class Installation:
             needs_update = False
 
         if needs_update:
-            print(f"Downloading and updating {self}...")
-            self.update_or_install()
+            print(f"Downloading and {'updating' if already_installed else 'installing'} {self}...")
+            self.install()
             print(f"... Done. {self} now up to date!")
 
     def is_installed(self):
@@ -129,20 +131,15 @@ class Installation:
     def needs_update(self):
         raise NotImplementedError()
 
-    def update_or_install(self):
+    def install(self):
         raise NotImplementedError()
 
     def version(self):
-        raise NotImplementedError()
-
-
-class SelfUpdate:
-    pass
+        return None
 
 
 class ClassicUO(Installation):
     INSTALLED_CHECK_PATHS = ("classicuo/ClassicUO",)
-    UNINSTALL_PATHS = ("classicuo",)
     MANIFEST_URL = "https://www.classicuo.eu/dev/deploy/manifest.xml"
     DOWNLOAD_URL = "https://www.classicuo.eu/dev/deploy/ClassicUO-dev-preview-release.zip"
 
@@ -166,7 +163,7 @@ class ClassicUO(Installation):
 
         return False
 
-    def update_or_install(self):
+    def install(self):
         path = self.download(self.DOWNLOAD_URL, name="ClassicUO client")
         self.unzip(path, self.cuo_path)
         os.chmod(self.cuo_path / "ClassicUO", 0o755)
@@ -217,7 +214,7 @@ class RazorCommunityEdition(Installation):
 
         return self._latest_release
 
-    def update_or_install(self):
+    def install(self):
         release = self.get_latest_release()
         if release.version == self.UNKNOWN:
             print(font("Can't update Razor without release information. Aborting.", FONT_RED))
@@ -246,7 +243,7 @@ class AngelIslandGoldenClient(Installation):
             return False
         return release.client != self.config["client_version"] or release.diff != self.config["diff_version"]
 
-    def update_or_install(self):
+    def install(self):
         release = self.get_latest_release()
 
         if self.args.force_update or not self.is_installed() or release.client != self.config["client_version"]:
@@ -287,21 +284,63 @@ class AngelIslandGoldenClient(Installation):
         if self.config["client_version"] == self.UNKNOWN:
             return self.UNKNOWN
 
-        return (
-            f"v{self.config['client_version']} (patch: v{self.config['diff_version']}) / UO Client:"
-            f" {self.get_exe_assembly_version(self.install_path / 'ai-golden-client/client.exe', tag_name='ProductVersionNumber')}"
+        uo_version = self.get_exe_assembly_version(
+            self.install_path / "ai-golden-client/client.exe", tag_name="ProductVersionNumber"
         )
+        return f"v{self.config['client_version']} (patch: v{self.config['diff_version']}) / UO Client: {uo_version}"
 
 
 class LinuxDesktopLauncher(Installation):
-    pass
+    LAUNCHER_PATH = HOME_DIR / ".local/share/applications/uo-siege-perilous.desktop"
+    ICON_PATH = HOME_DIR / ".local/share/icons/uo-siege-perilous.png"
+    INSTALLED_CHECK_PATHS = (LAUNCHER_PATH, ICON_PATH)
+    ICON_URL = "https://raw.githubusercontent.com/ColloidSP/UOSPLinux/main/uo-siege-perilous-icon.png"
+
+    TEMPLATE = (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Version=1.0\n"
+        "Name=UO:Siege Perilous\n"
+        "Keywords=uo;sp;siege;siege perilous;ultima;ultima online\n"
+        "Path={cuo_path}\n"
+        "Exec={cuo_exec}\n"
+        "Icon=uo-siege-perilous\n"
+        "StartupWMClass=ClassicUO.bin.x86_64\n"
+        "Terminal=false\n"
+        "Categories=Game;\n"
+        "StartupNotify=false\n"
+    )
+
+    @property
+    def launcher(self):
+        return self.TEMPLATE.format(cuo_path=self.cuo_path, cuo_exec=self.cuo_path / "ClassicUO")
+
+    def get_fresh_icon_path(self):
+        if not hasattr(self, "_fresh_icon_path"):
+            self._fresh_icon_path = self.download(self.ICON_URL, "UO:Siege Perilous icon")
+        return self._fresh_icon_path
+
+    def install(self):
+        self.mkdir(self.LAUNCHER_PATH.parent)
+        self.mkdir(self.ICON_PATH.parent)
+
+        with open(self.LAUNCHER_PATH, "w") as file:
+            file.write(self.launcher)
+        self.debug(f"Wrote Desktop launcher to: {self.LAUNCHER_PATH}\n{self.launcher}")
+
+        shutil.move(self.get_fresh_icon_path(), self.ICON_PATH)
+        self.debug(f"Wrote icon to {self.ICON_PATH}")
+
+    def needs_update(self):
+        with open(self.LAUNCHER_PATH, "r") as file:
+            local_launcher = file.read()
+        return local_launcher != self.launcher or md5sum_file(self.get_fresh_icon_path()) != md5sum_file(self.ICON_PATH)
 
 
 class UOSiegePerilous:
-    UNKNOWN = "unknown"
-    HOME_DIR = Path("~").expanduser()
+    COMMAND_PATH = Path(__file__).absolute()
     CONFIG_PATH = HOME_DIR / ".config" / "uo-siege-perilous.json"
-
+    UNKNOWN = "unknown"
     DEFAULT_CONFIG = {
         "client_version": UNKNOWN,
         "diff_version": UNKNOWN,
@@ -474,7 +513,15 @@ class UOSiegePerilous:
                 self.save_config()
 
     def do_uninstall(self):
-        question = "Are you SURE you want to "
+        uninstall_paths = [self.install_path, LinuxDesktopLauncher.LAUNCHER_PATH, LinuxDesktopLauncher.ICON_PATH]
+        if self.args.uninstall:
+            uninstall_paths.extend([self.CONFIG_PATH])
+
+        print("Files and directories to completely remove:")
+        for path in uninstall_paths:
+            print(f" * {path}")
+
+        question = "\nAre you SURE you want to "
         if self.args.reinstall:
             question += "COMPLETELY REMOVE and reinstall"
         else:
@@ -486,11 +533,7 @@ class UOSiegePerilous:
             print(font("Aborting.", FONT_RED))
             sys.exit(1)
 
-        uninstall_paths = (self.install_path,)
-
-        print("Completely removing...")
         for path in uninstall_paths:
-            print(f" * {path}")
             if path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)
             else:
@@ -527,7 +570,9 @@ class UOSiegePerilous:
 
         print("Versions:")
         for installation in self.installations:
-            print(f" * {installation} - {installation.version()}")
+            version = installation.version()
+            if version is not None:
+                print(f" * {installation} - {installation.version()}")
 
     def resolve_path(self, path):
         path = Path(path)
@@ -551,11 +596,7 @@ class UOSiegePerilous:
         if self.config["razor"]:
             self.debug("Including Razor in installation classes")
             installation_classes.append(RazorCommunityEdition)
-        installation_classes.extend(
-            [
-                AngelIslandGoldenClient,
-            ]
-        )
+        installation_classes.extend([AngelIslandGoldenClient, LinuxDesktopLauncher])
 
         self.installations = [cls(uosp=self) for cls in installation_classes]
 
