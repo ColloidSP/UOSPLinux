@@ -18,7 +18,7 @@ import time
 import traceback
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ElementTree
+import xml.etree.ElementTree
 import zipfile
 
 
@@ -152,7 +152,7 @@ class ClassicUO(Installation):
     def needs_update(self):
         path = self.download(self.MANIFEST_URL, "ClassicUO file manifest")
         try:
-            for file_elem in ElementTree.parse(path).getroot()[0][0]:
+            for file_elem in xml.etree.ElementTree.parse(path).getroot()[0][0]:
                 file, md5sum = file_elem.attrib["filename"], file_elem.attrib["hash"]
                 if check_md5sum(self.cuo_path / Path(file), md5sum):
                     self.debug(f"md5sum for {file}: passed.")
@@ -287,7 +287,10 @@ class AngelIslandGoldenClient(Installation):
         if self.config["client_version"] == self.UNKNOWN:
             return self.UNKNOWN
 
-        return f"v{self.config['client_version']} (patch: v{self.config['diff_version']}) / UO Client: {self.get_exe_assembly_version(self.install_path / 'ai-golden-client/client.exe', tag_name='ProductVersionNumber')}"
+        return (
+            f"v{self.config['client_version']} (patch: v{self.config['diff_version']}) / UO Client:"
+            f" {self.get_exe_assembly_version(self.install_path / 'ai-golden-client/client.exe', tag_name='ProductVersionNumber')}"
+        )
 
 
 class LinuxDesktopLauncher(Installation):
@@ -572,6 +575,9 @@ class UOSiegePerilous:
 
         for installation in self.installations:
             installation.run()
+
+        print()
+        print(font("UO:Siege Perilous is now up to date!", (FONT_GREEN, FONT_BOLD)))
 
 
 if __name__ == "__main__":
